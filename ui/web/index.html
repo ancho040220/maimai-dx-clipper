@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>maimai DX Rating Clipper</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    html, body, #root { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Qt WebChannel bridge (built-in Qt resource, no internet needed) -->
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+  <!-- React + Babel (local copies, no internet needed) -->
+  <script src="react.min.js"></script>
+  <script src="react-dom.min.js"></script>
+  <script src="babel.min.js"></script>
+
+  <script type="text/babel" src="app.js" data-type="module"></script>
+</body>
+</html>

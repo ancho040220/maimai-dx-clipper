@@ -1,0 +1,23 @@
+# 런타임 생성 파일
+cache/
+
+# PyInstaller 빌드 아티팩트
+build/
+dist/
+*.spec
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+
+# 인증 파일 (절대 커밋 금지)
+config/credentials/
+
+# 출력 폴더
+highlights/
+
+# 환경 설정
+.env
+
+.claude/

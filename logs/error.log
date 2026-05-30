@@ -1,0 +1,10 @@
+
+[2026-05-05 03:41:49] [pipeline]
+YouTube가 봇으로 인식하고 있습니다.
+Firefox에서 YouTube에 로그인한 뒤 다시 시도하세요.
+
+[2026-05-09 23:05:50] [pipeline]
+('invalid_grant: Token has been expired or revoked.', {'error': 'invalid_grant', 'error_description': 'Token has been expired or revoked.'})
+
+[2026-05-11 08:35:58] [pipeline]
+스트림 URL 추출 실패: ERROR: [youtube] _cq7Y_C0urE: Requested format is not available. Use --list-formats for a list of available formats
