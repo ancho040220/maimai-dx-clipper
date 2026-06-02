@@ -5,6 +5,10 @@ cache/
 build/
 dist/
 *.spec
+*.exe
+
+# 로그
+logs/
 
 # Python 캐시
 __pycache__/
