@@ -2,6 +2,12 @@
 
 ---
 
+## 다운로드
+
+**[▶ 최신 버전 다운로드 (maimai_clipper.exe)](https://github.com/ancho040220/maimai-dx-clipper/releases/latest)**
+
+---
+
 ## 시스템 요구사항
 
 | 항목 | 최소 | 권장 |
