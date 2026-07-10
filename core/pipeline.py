@@ -288,26 +288,40 @@ def _run_download_and_lookback(
                     start_dl_map[i] = None
 
         print("\n  역추적 완료 대기 중...")
-        lb_done  = 0
-        lb_total = len(lookback_async)
-        for i, ar in lookback_async.items():
+        lb_done   = 0
+        lb_total  = len(lookback_async)
+        remaining = dict(lookback_async)   # idx -> AsyncResult
+        # dict 순서로 항목마다 get(timeout=180)을 직렬 대기하면 앞선 항목이 매달릴 때
+        # 이미 끝난 뒤 항목들이 굶으므로(최악 항목수×180s), 전체 데드라인 안에서 완료된 것부터 수거 (A-26)
+        overall_deadline = time.time() + TIMEOUT_LOOKBACK_PER_ITEM + 30
+        while remaining and time.time() < overall_deadline:
             if cancel_event is not None and cancel_event.is_set():
                 break
-            try:
-                idx, local_play_ts, mode = ar.get(timeout=TIMEOUT_LOOKBACK_PER_ITEM)
-                lookback_map[idx] = (local_play_ts, mode)
+            for idx in list(remaining):
+                ar = remaining[idx]
+                if not ar.ready():
+                    continue
+                del remaining[idx]
                 lb_done += 1
-                print(f"  [{lb_done}/{lb_total}] 역추적 완료")
-                # 역추적으로 시작 시간이 확정됐으므로 스캔결과 카드에 즉시 반영
-                # (기존엔 Phase 3 클립 커팅에서야 emit돼 OCR 대기만큼 늦게 표시됨)
-                if local_play_ts is not None:
-                    actual_play_ts = local_play_ts + (start_dl_map.get(idx) or 0.0)
-                    det_id = history[idx].get("_detection_id", f"result_{idx+1}")
-                    print(f"[DETECT_UPD] {json.dumps({'id': det_id, 'play_t': fmt_time(actual_play_ts), 'mode': mode}, ensure_ascii=False)}")
-            except Exception as e:
-                lb_done += 1
-                print(f"  [{lb_done}/{lb_total}] 역추적 실패 ({e.__class__.__name__}) — 시작 지점 대체")
-                lookback_map[i] = (None, None)
+                try:
+                    ridx, local_play_ts, mode = ar.get(timeout=1)
+                    lookback_map[ridx] = (local_play_ts, mode)
+                    print(f"  [{lb_done}/{lb_total}] 역추적 완료")
+                    # 시작 시간이 확정됐으므로 스캔결과 카드에 즉시 반영
+                    if local_play_ts is not None:
+                        actual_play_ts = local_play_ts + (start_dl_map.get(ridx) or 0.0)
+                        det_id = history[ridx].get("_detection_id", f"result_{ridx+1}")
+                        print(f"[DETECT_UPD] {json.dumps({'id': det_id, 'play_t': fmt_time(actual_play_ts), 'mode': mode}, ensure_ascii=False)}")
+                except Exception as e:
+                    print(f"  [{lb_done}/{lb_total}] 역추적 실패 ({e.__class__.__name__}) — 시작 지점 대체")
+                    lookback_map[idx] = (None, None)
+            if remaining:
+                time.sleep(0.2)
+        # 데드라인/취소로 남은 항목은 시작 지점 대체 처리
+        for idx in remaining:
+            lb_done += 1
+            print(f"  [{lb_done}/{lb_total}] 역추적 미완료(타임아웃) — 시작 지점 대체")
+            lookback_map[idx] = (None, None)
     finally:
         lb_pool.terminate()
         lb_pool.join()

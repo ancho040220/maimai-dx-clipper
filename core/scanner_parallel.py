@@ -207,6 +207,7 @@ def _lookback(
     delta = LOOKBACK_STEP
     while delta <= max_lookback:
         t = result_ts - delta
+        delta += LOOKBACK_STEP   # read 실패 시에도 항상 전진 — 손상 프레임 연속 시 무한 루프 방지 (A-16)
         if t < 0:
             break
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
@@ -218,7 +219,6 @@ def _lookback(
             for roi, tmpl, thresh, mode in candidates:
                 if _match_template(crop, roi, tmpl, thresh):
                     return t, mode
-        delta += LOOKBACK_STEP
     return None, None
 
 
@@ -423,10 +423,12 @@ def _worker(args: dict) -> dict:
             print(f"  [W{worker_id}] 스트림 끊김 @ {fmt_time(current_sec)} — 5초 후 재연결... ({_reconnect_count}/3)")
             time.sleep(5)
             cap.release()
-            cap, _, _ = _open_and_seek(video_path, current_sec, scan_floor, worker_id)
+            # _open_and_seek가 반환하는 검증된 착지 위치 사용 — seek 직후 POS_MSEC는
+            # 첫 grab 전까지 stale이라 잘못된 frame_num을 만들 수 있음 (A-4)
+            cap, reconnect_sec, _ = _open_and_seek(video_path, current_sec, scan_floor, worker_id)
             if cap is None:
                 break
-            frame_num = int(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 * fps)
+            frame_num = int(reconnect_sec * fps)
             continue
         _reconnect_count = 0
         if (frame_num - start_frame) % step == 0:
