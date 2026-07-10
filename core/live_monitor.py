@@ -72,6 +72,7 @@ class LiveMonitor:
         self._history: list  = []
         self._history_lock   = threading.Lock()
         self._rating_threads: list = []
+        self._clip_sem       = threading.Semaphore(2)  # 동시 클리핑(역추적+ffmpeg) 제한 — 실시간 감지 굶김 방지 (A-25)
         self._detect_count   = 0           # monitor_loop 단일 스레드에서만 쓰임
 
     def start(self) -> list:
@@ -97,10 +98,20 @@ class LiveMonitor:
         except KeyboardInterrupt:
             print("\n⏹  모니터링 중단")
         finally:
-            self.recorder.stop()
+            # 녹화 프로세스만 먼저 멈추고(새 세그먼트 중단), 세그먼트 삭제는 진행 중인
+            # 클리핑이 끝난 뒤로 미룬다 — 방금 삭제된 세그먼트로 커팅해 실패하는 것 방지 (A-18)
+            rec = self.recorder
+            if rec and rec._proc and rec._proc.poll() is None:
+                try:
+                    rec._proc.terminate()
+                    rec._proc.wait()
+                except Exception:
+                    pass
             print(f"\n⏳  진행 중인 클리핑 완료 대기 중... ({len(self._rating_threads)}건)")
             for t in list(self._rating_threads):
                 t.join(timeout=60)
+            if rec:
+                rec.stop()
 
         return self._history
 
@@ -219,7 +230,7 @@ class LiveMonitor:
                                     # 즉시 감지 카드 emit (play_t는 역추적 후 DETECT_UPD로 갱신)
                                     print(f"[DETECT] {json.dumps({'id': det_id, 't': fmt_time(stream_sec), 'play_t': None, 'before': last_confirmed, 'after': confirmed, 'delta': change}, ensure_ascii=False)}")
                                     t = threading.Thread(
-                                        target=self._on_rating_change,
+                                        target=self._clip_worker,
                                         kwargs=dict(
                                             det_id=det_id,
                                             result_ts_wall=wall_now,
@@ -230,6 +241,7 @@ class LiveMonitor:
                                         ),
                                         daemon=True,
                                     )
+                                    self._rating_threads = [x for x in self._rating_threads if x.is_alive()]
                                     self._rating_threads.append(t)
                                     t.start()
                                     last_result_time = stream_sec
@@ -249,6 +261,11 @@ class LiveMonitor:
             if proc.poll() is None:
                 proc.terminate()
                 proc.wait()
+
+    def _clip_worker(self, **kwargs):
+        # 동시 클리핑 수를 세마포어로 제한해 실시간 감지 루프가 굶지 않게 한다 (A-25)
+        with self._clip_sem:
+            self._on_rating_change(**kwargs)
 
     def _on_rating_change(
         self,

@@ -68,6 +68,11 @@ class StreamRecorder:
         wrap = int(self.keep_secs / SEGMENT_SECS) + 2
         cmd = [
             "ffmpeg", "-y",
+            # 스트림 일시 끊김 시 ffmpeg가 자동 재연결 — 녹화 프로세스가 죽어 이후
+            # 하이라이트 커팅이 전부 실패하는 것을 방지 (A-2)
+            "-reconnect", "1",
+            "-reconnect_streamed", "1",
+            "-reconnect_delay_max", "5",
             "-i", self.stream_url,
             "-c", "copy",
             "-f", "segment",
@@ -119,7 +124,10 @@ class StreamRecorder:
         if not concat_list or first_seg_start is None:
             return False
 
-        concat_txt = self.seg_dir / "_concat.txt"
+        # 근접 감지로 여러 클리핑 스레드가 동시에 돌 때 고정 파일명은 서로 덮어써
+        # 커팅이 무작위로 실패하므로 호출마다 고유 파일명 사용 (A-17)
+        import uuid
+        concat_txt = self.seg_dir / f"_concat_{uuid.uuid4().hex[:8]}.txt"
         concat_txt.write_text("\n".join(f"file '{s}'" for s in concat_list), encoding="utf-8")
 
         ss_offset = max(0.0, start_clip - first_seg_start)
