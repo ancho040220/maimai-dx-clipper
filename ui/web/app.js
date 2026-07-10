@@ -854,7 +854,8 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
     if (!bridge || !songTitle.trim()) { setSuggestions([]); setShowSug(false); return; }
     const t = setTimeout(() => {
       bridge.search_songs(songTitle.trim(), (json) => {
-        const list = JSON.parse(json);
+        let list = [];
+        try { list = JSON.parse(json); } catch { return; }
         setSuggestions(list);
         setShowSug(list.length > 0);
         setHovIdx(-1);
@@ -2110,5 +2111,29 @@ function App() {
   );
 }
 
+// 손상된 페이로드/렌더 예외 하나로 트리 전체가 언마운트되어 흰 화면이 되는 것을 방지
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("UI 오류:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 24, color: "var(--fg)" }}>
+          <h3>화면 오류가 발생했습니다</h3>
+          <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, color: "var(--muted)" }}>
+            {String(this.state.error)}
+          </pre>
+          <button onClick={() => this.setState({ error: null })}
+                  style={{ marginTop: 12, padding: "6px 14px", cursor: "pointer" }}>
+            다시 시도
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+root.render(<ErrorBoundary><App /></ErrorBoundary>);

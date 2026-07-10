@@ -184,6 +184,7 @@ class LiveMonitor:
                     except Exception as e:
                         print(f"    재연결 실패: {e}")
                     proc = self._start_ffmpeg_pipe()
+                    self._ffmpeg_pipe = proc   # 재연결된 새 파이프를 stop()이 종료할 수 있도록 갱신
                     continue
 
                 self._reconnect_count = 0

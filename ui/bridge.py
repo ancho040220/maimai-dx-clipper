@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from config.settings import PROJECT_DIR
-from core.error_messages import translate_error
+from core.error_messages import translate_error, log_error
 from core.scanner_parallel import fmt_time
 from ui.workers import CheckWorker, PipelineWorker
 
@@ -77,6 +77,11 @@ class Bridge(QObject):
         self._phase_step      = 0
         self._phase_total     = 0
         self._scan_start_time = 0.0
+        self._worker_progress = {}   # start_clipping 경로(스캔 없이 클립만)에서도 참조되므로 여기서 초기화
+        self._dl_done         = 0
+        self._dl_total        = 0
+        self._ocr_done        = 0
+        self._ocr_total       = 0
         self._last_history    = []
         self._last_url        = ""
         self._song_titles: list = []
@@ -367,6 +372,9 @@ class Bridge(QObject):
         try:
             edited = json.loads(edited_json)
         except Exception:
+            # 편집 데이터 파싱 실패 — confirm_event.wait에서 1시간 블로킹되지 않도록 미편집 상태로 재개
+            if self._confirm_event:
+                self._confirm_event.set()
             return
 
         id_to_entry = {
@@ -399,7 +407,7 @@ class Bridge(QObject):
         q = query.strip().lower()
         if not q:
             return "[]"
-        matches = [t for t in self._song_titles if q in t.lower()][:5]
+        matches = [t for t in self._song_titles if q in t.lower()][:10]
         return json.dumps(matches, ensure_ascii=False)
 
     @pyqtSlot(str, str, result=str)
@@ -553,6 +561,13 @@ class Bridge(QObject):
         self.pipeline_error.emit(korean)
 
     def _on_log(self, line: str):
+        # 잘못되거나 잘린 IPC 라인 하나가 시그널 슬롯에서 예외로 터져 워커를 죽이지 않도록 방어
+        try:
+            self._dispatch_log(line)
+        except Exception as exc:
+            log_error(exc, context="_on_log")
+
+    def _dispatch_log(self, line: str):
         # ── IPC 구조화 메시지 — 로그에 표시하지 않음 ──────────────────────────
         if line.startswith("[DETECT]"):
             self.detection_added.emit(line[8:].strip())

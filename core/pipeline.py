@@ -49,12 +49,15 @@ def check_video_status(url: str) -> dict:
                 info = ydl.extract_info(url, download=False)
             except Exception as e:
                 log_error(e, context="check_video_status")
-                raise RuntimeError(translate_error(e)) from e
+                raise   # 원본 예외 유지 → is_retryable가 원문/타입으로 재시도 여부 판별
         if info is None:
             raise RuntimeError("yt-dlp 메타데이터 조회 실패: 정보를 가져오지 못했습니다.")
         return info
 
-    info = with_retry(_fetch, max_attempts=3, label="URL 상태 확인")
+    try:
+        info = with_retry(_fetch, max_attempts=3, label="URL 상태 확인")
+    except Exception as e:
+        raise RuntimeError(translate_error(e)) from e   # 사용자용 번역은 최상위에서 한 번만
     return {
         "is_live":  info.get("is_live", False),
         "title":    info.get("title", ""),
