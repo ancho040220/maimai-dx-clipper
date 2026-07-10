@@ -7,6 +7,21 @@ from config.settings import CLIENT_SECRET, YOUTUBE_TOKEN
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
+_RETRIABLE_STATUS   = frozenset({500, 502, 503, 504})   # 일시적 서버 오류 → 재시도
+_UPLOAD_MAX_RETRIES = 5
+
+
+def _http_error_reason(exc) -> str:
+    """HttpError content에서 error reason 추출 (문자열 매칭 대신 구조화 파싱)."""
+    try:
+        data = json.loads(exc.content.decode("utf-8"))
+        errs = data.get("error", {}).get("errors", [])
+        if errs:
+            return errs[0].get("reason", "")
+    except Exception:
+        pass
+    return ""
+
 
 class YouTubeUploader:
     """
@@ -79,29 +94,56 @@ class YouTubeUploader:
         media   = MediaFileUpload(str(video_path), chunksize=10 * 1024 * 1024, resumable=True)
         request = self._yt.videos().insert(part="snippet,status", body=body, media_body=media)
 
-        try:
-            response = None
-            while response is None:
+        from googleapiclient.errors import HttpError
+        import socket, ssl, time
+
+        _retriable_exc = (socket.timeout, ssl.SSLError, ConnectionError, OSError)
+
+        def _fail(ecode: str, msg: str) -> None:
+            print(f"    ⚠️  {msg}")
+            print(f"[HL_UPD] {json.dumps({'file': fname, 'status': 'failed', 'error': ecode}, ensure_ascii=False)}")
+
+        response = None
+        retry    = 0
+        # resumable 세션이므로 일시 오류 시 next_chunk() 재호출로 이어받는다 (A-12)
+        while response is None:
+            error_label = None
+            try:
                 status, response = request.next_chunk()
                 if status is None and response is None:
-                    raise RuntimeError("next_chunk() returned (None, None) — 네트워크 오류")
-                if status:
+                    error_label = "빈 응답"
+                elif status:
                     pct = status.progress()
                     print(f"    업로드 {int(pct * 100)}%...", end="\r")
                     print(f"[HL_UPD] {json.dumps({'file': fname, 'status': 'uploading', 'progress': round(pct, 2)}, ensure_ascii=False)}")
-        except Exception as e:
-            err = str(e)
-            if "quotaExceeded" in err or "403" in err:
-                _ecode = "quotaExceeded"
-                print("    ⚠️  YouTube API 할당량 초과 — 오늘 업로드 불가 (파일은 highlights/ 에 보존됨)")
-            elif "uploadLimitExceeded" in err:
-                _ecode = "uploadLimitExceeded"
-                print("    ⚠️  YouTube 계정 업로드 한도 초과 — 하루 업로드 가능 수를 초과했습니다 (파일은 highlights/ 에 보존됨)")
-            else:
-                _ecode = "uploadFailed"
-                print(f"    ⚠️  업로드 실패: {e}")
-            print(f"[HL_UPD] {json.dumps({'file': fname, 'status': 'failed', 'error': _ecode}, ensure_ascii=False)}")
-            return None
+            except HttpError as e:
+                code = getattr(e.resp, "status", None)
+                if code not in _RETRIABLE_STATUS:
+                    # 재시도 불가 — 상태코드/reason 구조화 분류 (A-24)
+                    reason = _http_error_reason(e)
+                    if code == 403 and reason in ("quotaExceeded", "dailyLimitExceeded"):
+                        _fail("quotaExceeded", "YouTube API 할당량 초과 — 오늘 업로드 불가 (파일은 highlights/ 에 보존됨)")
+                    elif reason == "uploadLimitExceeded":
+                        _fail("uploadLimitExceeded", "YouTube 계정 업로드 한도 초과 (파일은 highlights/ 에 보존됨)")
+                    elif code in (401, 403):
+                        _fail("authFailed", f"업로드 권한/인증 오류 (HTTP {code}, {reason or '원인 미상'}) — 재인증이 필요할 수 있습니다")
+                    else:
+                        _fail("uploadFailed", f"업로드 실패 (HTTP {code}, {reason or str(e)[:80]})")
+                    return None
+                error_label = f"HTTP {code}"
+            except _retriable_exc as e:
+                error_label = type(e).__name__
+            except Exception as e:
+                error_label = str(e)[:60]
+
+            if error_label:
+                retry += 1
+                if retry > _UPLOAD_MAX_RETRIES:
+                    _fail("uploadFailed", f"업로드 실패: {error_label} — {_UPLOAD_MAX_RETRIES}회 재시도 후 포기 (파일은 highlights/ 에 보존됨)")
+                    return None
+                delay = min(2 ** retry, 30)
+                print(f"    ⚠️  업로드 일시 오류({error_label}) — {delay}초 후 재시도 {retry}/{_UPLOAD_MAX_RETRIES}...")
+                time.sleep(delay)
 
         video_id = response.get("id", "")
         url = f"youtu.be/{video_id}"

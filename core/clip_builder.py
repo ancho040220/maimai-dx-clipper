@@ -90,6 +90,8 @@ def _cut_and_upload_clips(
     """각 항목별 클립 커팅 → 업로드. OCR 결과는 history 항목에 이미 적용되어 있어야 함."""
     n = len(history)
     pending_uploads: list[str] = []
+    n_cut       = 0   # 커팅 성공
+    n_estimated = 0   # 역추적 실패로 시작 지점을 추정(3분 전)한 클립
 
     for i, entry in enumerate(history):
         if cancel_event is not None and cancel_event.is_set():
@@ -121,7 +123,8 @@ def _cut_and_upload_clips(
             print(f"[DETECT_UPD] {json.dumps({'id': det_id, 'play_t': fmt_time(actual_play_ts), 'mode': mode, 'song_title': entry.get('song_title'), 'difficulty': entry.get('difficulty'), 'achievement': entry.get('achievement'), 'rank': entry.get('rank'), 'internal_level': entry.get('internal_level')}, ensure_ascii=False)}")
         else:
             local_play_ts = max(0.0, local_result_ts - 180)
-            print("    ⚠️  시작 화면 미발견 — 3분 전으로 대체")
+            n_estimated += 1
+            print("    ⚠️  시작 화면 미발견 — 3분 전으로 추정 (부정확할 수 있음)")
 
         clip_start = max(0.0, local_play_ts - HIGHLIGHT_PRE)
         clip_end   = local_result_ts + HIGHLIGHT_POST
@@ -130,6 +133,7 @@ def _cut_and_upload_clips(
         out_file   = output_dir / f"{_title_to_filename(title)}_{ts_tag}.mp4"
 
         if _ffmpeg_trim(temp_file, clip_start, clip_end, out_file):
+            n_cut += 1
             print(f"    💾  {out_file.name}")
             size_mb = round(out_file.stat().st_size / 1024 / 1024, 1) if out_file.exists() else 0
             dur_s   = int(clip_end - clip_start)
@@ -154,7 +158,11 @@ def _cut_and_upload_clips(
             else:
                 pending_uploads.append(out_file.name)
 
+    # 처리 요약 — 전부 추정 시작 지점이거나 업로드 실패가 있으면 명시적으로 알림 (B-8)
+    print(f"\n📋  클립 처리 요약: 커팅 {n_cut}/{n} · 시작지점 추정 {n_estimated} · 업로드 실패 {len(pending_uploads)}")
+    if n_cut > 0 and n_estimated == n_cut:
+        print("🚨  모든 클립이 시작 지점 '추정'으로 잘렸습니다 — 역추적이 전부 실패했을 수 있습니다. 클립 구간을 확인하세요.")
     if pending_uploads:
-        print("\n🚨  업로드 실패 영상 — highlights/ 폴더에서 수동으로 업로드하세요:")
+        print("🚨  업로드 실패 영상 — highlights/ 폴더에서 수동으로 업로드하세요:")
         for name in pending_uploads:
             print(f"    {name}")

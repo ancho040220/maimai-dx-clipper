@@ -348,14 +348,20 @@ def process_vod_entries(
 
     # ── Thread A: OCR (다운로드와 병렬 실행) ─────────────────────────────────
     def _ocr_thread_fn():
-        if not skip_ocr:
-            ocr_yolo, song_titles, raw_songs, ocr_frames_map = _run_ocr_phase(history, url, output_dir)
-            _build_ocr_payload(
-                history, ocr_yolo, song_titles, raw_songs,
-                ocr_frames_map, result_frames_dir, _payload,
-            )
-        if ocr_event is not None:
-            ocr_event.set()
+        # 예외로 daemon 스레드가 조용히 죽으면 ocr_event 미set → join이 타임아웃까지 소진되고
+        # 빈 payload로 진행되므로, 무슨 일이 있어도 ocr_event 를 set 한다 (A-14)
+        try:
+            if not skip_ocr:
+                ocr_yolo, song_titles, raw_songs, ocr_frames_map = _run_ocr_phase(history, url, output_dir)
+                _build_ocr_payload(
+                    history, ocr_yolo, song_titles, raw_songs,
+                    ocr_frames_map, result_frames_dir, _payload,
+                )
+        except Exception as e:
+            print(f"  ⚠️  OCR 처리 중 오류 — 곡명 없이 진행합니다: {e}")
+        finally:
+            if ocr_event is not None:
+                ocr_event.set()
 
     ocr_th = threading.Thread(target=_ocr_thread_fn, daemon=True, name="ocr-phase")
     ocr_th.start()
