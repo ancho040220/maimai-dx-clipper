@@ -95,13 +95,12 @@ SEGMENT_SECS   = 60     # ffmpeg 세그먼트 단위 (초)
 # ── 다운로드 / 매칭 ────────────────────────────────────────────────────────────
 DL_WORKERS_MAX       = 5   # 동시 다운로드 최대 워커 수
 OCR_CLIP_PRE         = 1.5  # OCR 클립 앞쪽 여유 (초)
-OCR_CLIP_POST        = 3.5  # OCR 클립 뒤쪽 여유 (초, best frame 분포 +2.0~+3.0s 기준)
+OCR_CLIP_POST        = 6.5  # OCR 클립 뒤쪽 여유 (초) — 레이팅 상승 애니메이션 후 결과 화면(~+6s)은 포착하되, 뒤이은 선곡 화면 오선택은 최소화
 OCR_CONFIDENCE_MIN     = 0.3  # OCR 결과 최소 신뢰도
-OCR_FRAME_SAMPLE_COUNT = 51   # OCR 프레임 샘플링 개수 (-1.5~+3.5s, 0.1s 간격)
 
 # ── 타임아웃 (초) ──────────────────────────────────────────────────────────────
-TIMEOUT_OCR_BATCH_BASE    = 180   # OCR 배치 기본 타임아웃
-TIMEOUT_OCR_BATCH_PER     = 150   # OCR 배치 항목당 추가 타임아웃
+TIMEOUT_OCR_BATCH_BASE    = 30    # OCR 클립 다운로드 기본 타임아웃 (작은 클립이라 짧게 — 매달림 시 조기 종료)
+TIMEOUT_OCR_BATCH_PER     = 20    # OCR 클립 다운로드 항목당 추가 타임아웃
 TIMEOUT_OCR_EDIT_WAIT     = 3600  # OCR 편집 대기 최대 시간
 TIMEOUT_LOOKBACK_PER_ITEM = 180   # 역추적 항목당 타임아웃
 TIMEOUT_WORKER_WATCHDOG   = 600   # 워커 watchdog 기준

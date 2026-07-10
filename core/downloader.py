@@ -11,11 +11,10 @@ import numpy as np
 
 from config.settings import (
     ytdlp_cookie_args, NO_WINDOW, OCR_CLIP_PRE, OCR_CLIP_POST,
-    OCR_FRAME_SAMPLE_COUNT, TIMEOUT_OCR_BATCH_BASE, TIMEOUT_OCR_BATCH_PER,
 )
 from core.error_messages import translate_error
 from core.result_extractor import _sharpness
-from core.scanner_parallel import _detect_game_crop, _init_yolo, _lookback, _build_candidates
+from core.scanner_parallel import _detect_game_crop, _init_yolo, _lookback, _build_candidates, fmt_time
 
 
 _MAX_DL_ATTEMPTS = 3    # 다운로드 최대 재시도 횟수
@@ -134,104 +133,74 @@ def _grab_all_result_frames(
     yolo_model,
     url: str,
     result_timestamps: list[float],
-    tmp_dir: Path,
+    tmp_dir: Path = None,
 ) -> dict[float, tuple[list[np.ndarray], Optional[float]]]:
-    """yt-dlp 1회 호출로 배치 다운로드, 완료된 클립부터 즉시 OCR 분석."""
+    """스트림 URL을 직접 열어 각 결과 타임스탬프 주변 프레임을 grab.
+
+    스캔과 동일한 cv2 스트리밍 방식 — yt-dlp --download-sections 의 DASH 조각
+    다운로드가 YouTube 쓰로틀링에 매달리는 문제를 회피하며 1080p를 유지한다.
+    (tmp_dir 인자는 하위 호환용, 사용하지 않음.)
+    """
     if not result_timestamps:
         return {}
 
-    offsets = [round(-OCR_CLIP_PRE + i * 0.1, 1) for i in range(OCR_FRAME_SAMPLE_COUNT)]
+    from core.pipeline import get_stream_url   # 순환 import 회피 — 호출 시점 로드
 
-    def _sec_to_hms(s: float) -> str:
-        s = int(s)
-        return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+    results: dict[float, tuple[list[np.ndarray], Optional[float]]] = {
+        ts: ([], None) for ts in result_timestamps
+    }
 
-    clip_starts = {ts: max(0.0, ts - OCR_CLIP_PRE) for ts in result_timestamps}
-    cs_to_ts    = {cs: ts for ts, cs in clip_starts.items()}
+    try:
+        stream_url = get_stream_url(url)
+    except Exception as e:
+        print(f"  ⚠️  OCR 스트림 URL 추출 실패 — 곡명 인식 생략: {e}")
+        return results
 
-    sections_args = []
-    for ts in result_timestamps:
-        cs, ce = clip_starts[ts], ts + OCR_CLIP_POST
-        sections_args += ["--download-sections", f"*{_sec_to_hms(cs)}-{_sec_to_hms(ce)}"]
+    print(f"  OCR 결과 화면 스트리밍 분석 ({len(result_timestamps)}개 구간)...")
 
-    out_tmpl = str(tmp_dir / "_ocr_%(section_start)s.%(ext)s")
+    cap = cv2.VideoCapture()
+    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 30_000)
+    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 15_000)
+    cap.open(stream_url)
+    if not cap.isOpened():
+        print("  ⚠️  OCR 스트림 열기 실패 — 곡명 인식 생략")
+        return results
 
-    print(f"  OCR 클립 다운로드 + 즉시 분석 ({len(result_timestamps)}개 구간)...")
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "yt_dlp",
-         *sections_args,
-         "-f", "bestvideo[height<=1080][ext=mp4]/bestvideo[height<=1080]",
-         "--no-playlist", "--no-warnings",
-         "-N", "16",
-         *ytdlp_cookie_args(),
-         "-o", out_tmpl, url],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        creationflags=NO_WINDOW,
-    )
+    fps         = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    sample_step = max(1, int(fps * 0.2))   # ~0.2s 간격 샘플
+    # seek 이 창보다 앞선 키프레임에 착지할 수 있으므로 여유분 포함해 grab 상한 설정
+    max_grabs   = int(fps * (OCR_CLIP_PRE + OCR_CLIP_POST + 30)) + 200
 
-    def _analyze_clip(clip_path: Path, ts: float) -> tuple[list[np.ndarray], Optional[float]]:
-        cs        = clip_starts[ts]
-        base_t    = ts - cs
+    # 타임스탬프 오름차순으로 seek — 스트림은 앞으로 이동이 안정적
+    for ts in sorted(result_timestamps):
+        start_t = max(0.0, ts - OCR_CLIP_PRE)
+        end_t   = ts + OCR_CLIP_POST
+        cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000.0)
+
         frame_data: list[tuple[np.ndarray, float]] = []
-        cap = cv2.VideoCapture(str(clip_path))
-        if cap.isOpened():
-            for offset in offsets:
-                t = base_t + offset
-                if t < 0:
-                    continue
-                cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
-                ret, frame = cap.read()
+        idx = 0
+        for _ in range(max_grabs):
+            if not cap.grab():
+                break
+            cur = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            if cur > end_t:
+                break
+            if cur < start_t:          # 창 이전(키프레임 착지 여유분) 프레임은 건너뜀
+                continue
+            if idx % sample_step == 0:
+                ret, frame = cap.retrieve()
                 if ret and frame is not None:
                     crop = _detect_game_crop(yolo_model, frame)
                     if crop is not None:
-                        frame_data.append((crop, ts + offset))
-            cap.release()
-        clip_path.unlink(missing_ok=True)
-        if not frame_data:
-            return [], None
-        best_crop, best_vt = max(frame_data, key=lambda x: _sharpness(x[0]))
-        return [best_crop], best_vt
+                        frame_data.append((crop, cur))
+            idx += 1
 
-    def _process_available_clips(processed: set, results: dict) -> None:
-        """완료된 클립 파일을 찾아 즉시 분석."""
-        for p in tmp_dir.glob("_ocr_*.*"):
-            if p in processed or p.suffix == ".part":
-                continue
-            if Path(str(p) + ".part").exists() or p.stat().st_size == 0:
-                continue
-            processed.add(p)
-            try:
-                sec = float(p.stem.split("_ocr_", 1)[1])
-            except (IndexError, ValueError):
-                continue
-            closest_cs = min(cs_to_ts, key=lambda s: abs(s - sec))
-            if abs(closest_cs - sec) > 5:
-                continue
-            ts = cs_to_ts[closest_cs]
-            if ts in results:
-                continue
-            print(f"  [OCR] {int(ts)}s 분석 중...")
-            results[ts] = _analyze_clip(p, ts)  # (frames, exact_vt)
+        if frame_data:
+            best_crop, best_vt = max(frame_data, key=lambda x: _sharpness(x[0]))
+            results[ts] = ([best_crop], best_vt)
+            print(f"  [OCR] {fmt_time(ts)} 분석 완료 ({len(frame_data)}프레임)")
+        else:
+            print(f"  [OCR] {fmt_time(ts)} 게임 화면 미검출")
 
-    results:   dict[float, list[np.ndarray]] = {}
-    processed: set = set()
-    deadline = time.time() + TIMEOUT_OCR_BATCH_BASE + TIMEOUT_OCR_BATCH_PER * len(result_timestamps)
-
-    while time.time() < deadline:
-        _process_available_clips(processed, results)
-        if len(results) >= len(result_timestamps):
-            break
-        if proc.poll() is not None:
-            _process_available_clips(processed, results)
-            break
-        time.sleep(0.3)
-
-    if proc.poll() is None:
-        proc.kill()
-        proc.wait()
-
-    for ts in result_timestamps:
-        if ts not in results:
-            results[ts] = ([], None)
-
+    cap.release()
     return results

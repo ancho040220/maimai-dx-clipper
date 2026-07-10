@@ -1,5 +1,6 @@
 """maimai DX 결과화면에서 곡명 / 난이도 / 달성률 추출 (1000×1000 크롭 기준)."""
 import re
+import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Optional
@@ -29,21 +30,38 @@ def _get_paddle_ocr():
     return _paddle_ocr
 
 
-def _clova_ocr(img: np.ndarray) -> str:
-    """CLOVA OCR API로 이미지에서 텍스트 추출 (1000×1000 전체 프레임)."""
+def _clova_ocr(img: np.ndarray, max_attempts: int = 2) -> str:
+    """CLOVA OCR API로 이미지에서 텍스트 추출 (1000×1000 전체 프레임).
+
+    일시적 실패(inferResult=FAILURE / 연결 오류 / HTTP 5xx)는 재시도한다.
+    HTTP 400(쿼터 초과 등)은 재시도해도 무의미하므로 즉시 반환.
+    """
     _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
     img_b64 = base64.b64encode(buf).decode('utf-8')
-    payload = {
-        "version": "V2",
-        "requestId": str(uuid.uuid4()),
-        "timestamp": 0,
-        "images": [{"format": "jpg", "name": "img", "data": img_b64}],
-    }
     headers = {"X-OCR-SECRET": CLOVA_OCR_SECRET, "Content-Type": "application/json"}
-    try:
-        resp = _requests.post(CLOVA_OCR_URL, json=payload, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            if resp.status_code == 400:
+
+    def _retry_note(attempt):
+        return f" — 재시도 {attempt}/{max_attempts - 1}" if attempt < max_attempts else ""
+
+    for attempt in range(1, max_attempts + 1):
+        payload = {
+            "version": "V2",
+            "requestId": str(uuid.uuid4()),
+            "timestamp": 0,
+            "images": [{"format": "jpg", "name": "img", "data": img_b64}],
+        }
+        try:
+            resp = _requests.post(CLOVA_OCR_URL, json=payload, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                image = resp.json().get("images", [{}])[0]
+                if image.get("inferResult") == "SUCCESS":
+                    title = image.get("title", {})
+                    if title and title.get("inferText"):
+                        return title["inferText"]
+                    return " ".join(f["inferText"] for f in image.get("fields", []))
+                # inferResult=FAILURE 등 — 일시적, 재시도 대상
+                print(f"  ⚠️  CLOVA OCR 인식 실패 (inferResult={image.get('inferResult')}){_retry_note(attempt)}")
+            elif resp.status_code == 400:
                 try:
                     err_code = resp.json().get("code", "")
                 except Exception:
@@ -52,21 +70,17 @@ def _clova_ocr(img: np.ndarray) -> str:
                     print("❌ CLOVA OCR 월 사용 한도 초과 — 이후 곡명 인식이 불가능합니다.")
                 else:
                     print(f"  ⚠️  CLOVA OCR HTTP {resp.status_code}")
+                return ""   # 400은 재시도 무의미
             else:
-                print(f"  ⚠️  CLOVA OCR HTTP {resp.status_code}")
-            return ""
-        image = resp.json().get("images", [{}])[0]
-        infer = image.get("inferResult")
-        if infer != "SUCCESS":
-            print(f"  ⚠️  CLOVA OCR 인식 실패 (inferResult={infer})")
-            return ""
-        title = image.get("title", {})
-        if title and title.get("inferText"):
-            return title["inferText"]
-        return " ".join(f["inferText"] for f in image.get("fields", []))
-    except Exception as e:
-        print(f"  ⚠️  CLOVA OCR 연결 실패: {e}")
-        return ""
+                # 5xx 등 — 재시도 대상
+                print(f"  ⚠️  CLOVA OCR HTTP {resp.status_code}{_retry_note(attempt)}")
+        except Exception as e:
+            print(f"  ⚠️  CLOVA OCR 연결 실패: {e}{_retry_note(attempt)}")
+
+        if attempt < max_attempts:
+            time.sleep(1.0)
+
+    return ""
 
 
 

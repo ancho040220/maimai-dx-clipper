@@ -85,6 +85,7 @@ class Bridge(QObject):
         self._auto_upload     = True
         self._ocr_event          = None
         self._confirm_event      = None
+        self._cancel_event       = None
         self._confirmed_history  = []
         self._ocr_payload_holder = []
         self._live_monitor       = None
@@ -125,6 +126,7 @@ class Bridge(QObject):
         (CACHE_DIR / "mai_youtube_url.txt").write_text(url, encoding="utf-8")
         (PROJECT_DIR / "highlights").mkdir(exist_ok=True)
 
+        self._cancel_event    = threading.Event()
         self._failed_files    = []
         self._phase_current   = "fetch"
         self._phase_step      = 0
@@ -186,7 +188,7 @@ class Bridge(QObject):
                 history = analyze_vod_stream(
                     url=url, start_sec=start_sec or 0.0, end_sec=end_sec,
                     initial_rating=rating, num_workers=n_workers,
-                    output_file=None,
+                    output_file=None, cancel_event=self._cancel_event,
                 )
                 if not history:
                     print("ℹ️  감지된 레이팅 변동 없음 — 클립 추출 단계를 건너뜁니다.")
@@ -210,12 +212,20 @@ class Bridge(QObject):
             return  # pipeline_stopped 미발생 — UI 는 scan_done 신호로 전환됨
 
         # Phase 2 또는 VOD: 완전 중단
+        if self._cancel_event:
+            self._cancel_event.set()   # 스캔 루프에 협조적 취소 신호 → 워커 프로세스 정리
         if self._confirm_event:
             self._confirm_event.set()
         if self._live_monitor is not None:
             self._live_monitor.stop()
             self._live_monitor = None
         if self._worker and self._worker.isRunning():
+            # 취소로 워커가 정상 리턴하며 done→scan_finished("done")을 쏘면
+            # pipeline_stopped("idle")를 덮어써 "완료"로 오인됨 → done 연결 해제
+            try:
+                self._worker.done.disconnect()
+            except Exception:
+                pass
             self._worker.stop(cleanup_fn=self._cleanup_temp_files)
         self.pipeline_stopped.emit()
 
@@ -635,12 +645,14 @@ class Bridge(QObject):
             m_pct = re.search(r'(\d+(?:\.\d+)?)\s*%', clean)
             if m_id and m_pct:
                 self._worker_progress[int(m_id.group(1))] = float(m_pct.group(1))
-            if self._worker_progress:
-                avg = sum(self._worker_progress.values()) / len(self._worker_progress)
+            avg = (sum(self._worker_progress.values()) / len(self._worker_progress)
+                   if self._worker_progress else 0.0)
+            if avg <= 0.0:
+                # 모든 워커가 아직 첫 프레임 전 — spawn·모델 로드·구간 탐색 단계
+                self._emit_phase("워커 초기화 중... (모델 로드·구간 탐색)")
+            else:
                 eta_str = self._calc_eta(avg)
                 self._emit_phase(f"스캔 중... {avg:.1f}%{eta_str}")
-            else:
-                self._emit_phase("스캔 중...")
             return
 
         # ── 반복성 진행 틱 → phase bar 전용 ─────────────────────────────────

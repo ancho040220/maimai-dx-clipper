@@ -99,6 +99,7 @@ def analyze_vod_stream(
     initial_rating: Optional[int] = None,
     num_workers: int = 0,
     output_file: Optional[str] = None,
+    cancel_event=None,
 ) -> list:
     """VOD를 스트림 URL로 직접 포워드 스캔."""
     print("🔗  스트림 URL 추출 중...")
@@ -115,6 +116,7 @@ def analyze_vod_stream(
         initial_rating=initial_rating,
         num_workers=n_workers,
         output_file=output_file,
+        cancel_event=cancel_event,
     )
 
 
@@ -288,6 +290,12 @@ def _run_download_and_lookback(
                 lookback_map[idx] = (local_play_ts, mode)
                 lb_done += 1
                 print(f"  [{lb_done}/{lb_total}] 역추적 완료")
+                # 역추적으로 시작 시간이 확정됐으므로 스캔결과 카드에 즉시 반영
+                # (기존엔 Phase 3 클립 커팅에서야 emit돼 OCR 대기만큼 늦게 표시됨)
+                if local_play_ts is not None:
+                    actual_play_ts = local_play_ts + (start_dl_map.get(idx) or 0.0)
+                    det_id = history[idx].get("_detection_id", f"result_{idx+1}")
+                    print(f"[DETECT_UPD] {json.dumps({'id': det_id, 'play_t': fmt_time(actual_play_ts), 'mode': mode}, ensure_ascii=False)}")
             except Exception as e:
                 lb_done += 1
                 print(f"  [{lb_done}/{lb_total}] 역추적 실패 ({e.__class__.__name__}) — 시작 지점 대체")
@@ -357,8 +365,10 @@ def process_vod_entries(
         return
 
     # ── OCR thread 완료 대기 ─────────────────────────────────────────────────
+    # join은 다운로드 데드라인(BASE+PER*n)에 더해 CLOVA 처리 시간(항목당 15s)까지 커버해야
+    # 다운로드가 데드라인에 걸린 뒤에도 이미 받은 클립의 OCR 결과가 유실되지 않는다.
     print("\n  OCR 분석 완료 대기 중...")
-    ocr_th.join(timeout=TIMEOUT_OCR_BATCH_BASE + TIMEOUT_OCR_BATCH_PER * n)
+    ocr_th.join(timeout=TIMEOUT_OCR_BATCH_BASE + (TIMEOUT_OCR_BATCH_PER + 15) * n)
 
     # ── OCR 확인 처리 ─────────────────────────────────────────────────────────
     if confirm_event is not None:

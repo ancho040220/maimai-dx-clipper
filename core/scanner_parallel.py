@@ -588,6 +588,7 @@ def scan_parallel(
     initial_rating: Optional[int],
     num_workers: int,
     output_file: Optional[str] = None,
+    cancel_event=None,
 ) -> list:
     print(f"📍  YOLO → 1000×1000 → OCR ROI {GAME_ROI}\n")
 
@@ -639,37 +640,53 @@ def scan_parallel(
 
     raw_results = []
     pending     = num_workers
+    cancelled   = False
 
-    while pending > 0:
-        # 모든 프로세스가 종료됐으면 남은 결과를 드레인 후 빠져나감
-        if all(not p.is_alive() for p in processes):
-            while True:
-                try:
-                    raw_results.append(result_queue.get_nowait())
-                    pending -= 1
-                except Exception:
-                    break
-            break
-        # 워커 활동 기반 watchdog — 어떤 워커도 10분간 progress를 보내지 않으면 freeze로 판단
-        if time.time() - last_activity[0] > TIMEOUT_WORKER_WATCHDOG:
-            print(f"⚠️  워커 활동 없음 ({TIMEOUT_WORKER_WATCHDOG}초 초과) — 강제 중단합니다.")
-            for p in processes:
+    try:
+        while pending > 0:
+            # 사용자 중단 요청 — 워커 프로세스는 finally에서 정리됨
+            if cancel_event is not None and cancel_event.is_set():
+                print("🛑  사용자 중단 요청 — 스캔을 종료합니다.")
+                cancelled = True
+                break
+            # 모든 프로세스가 종료됐으면 남은 결과를 드레인 후 빠져나감
+            if all(not p.is_alive() for p in processes):
+                while True:
+                    try:
+                        raw_results.append(result_queue.get_nowait())
+                        pending -= 1
+                    except Exception:
+                        break
+                break
+            # 워커 활동 기반 watchdog — 어떤 워커도 10분간 progress를 보내지 않으면 freeze로 판단
+            if time.time() - last_activity[0] > TIMEOUT_WORKER_WATCHDOG:
+                print(f"⚠️  워커 활동 없음 ({TIMEOUT_WORKER_WATCHDOG}초 초과) — 강제 중단합니다.")
+                break
+            try:
+                raw_results.append(result_queue.get(timeout=0.1))
+                pending -= 1
+            except Exception:
+                pass
+    finally:
+        # 중단 요청이면 즉시 종료. cancelled 플래그뿐 아니라 cancel_event 도 확인 —
+        # stop() 이 주입한 KeyboardInterrupt 가 루프의 cancel 체크보다 먼저 터지면
+        # cancelled 가 False 로 남아 느린 join 경로를 타면서 워커가 계속 진행되기 때문.
+        stop_requested = cancelled or (cancel_event is not None and cancel_event.is_set())
+        for p in processes:
+            if stop_requested:
                 if p.is_alive():
                     p.terminate()
-            break
-        try:
-            raw_results.append(result_queue.get(timeout=0.1))
-            pending -= 1
-        except Exception:
-            pass
-    raw_results = sorted(raw_results, key=lambda x: x["worker_id"])
-    for p in processes:
-        p.join(timeout=10)
-        if p.is_alive():
-            p.terminate()
+            else:
+                p.join(timeout=10)
+                if p.is_alive():
+                    p.terminate()
+        stop_event.set()
+        display_thread.join()
 
-    stop_event.set()
-    display_thread.join()
+    if cancelled or (cancel_event is not None and cancel_event.is_set()):
+        return []
+
+    raw_results = sorted(raw_results, key=lambda x: x["worker_id"])
 
     print("📊  병합 중...\n")
     history, total_checked = merge_and_detect(raw_results, initial_rating, video_url)
