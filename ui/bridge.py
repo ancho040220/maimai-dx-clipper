@@ -430,6 +430,14 @@ class Bridge(QObject):
         if frame_path.exists():
             os.startfile(str(frame_path))
 
+    @pyqtSlot(str)
+    def open_clip(self, file_name: str):
+        """생성된 하이라이트 클립을 OS 기본 플레이어로 열기 (없으면 무시 — 업로드 후 삭제된 경우)."""
+        import os
+        clip_path = PROJECT_DIR / "highlights" / file_name
+        if clip_path.exists():
+            os.startfile(str(clip_path))
+
     @pyqtSlot(str, result=str)
     def get_result_frame_url(self, det_id: str) -> str:
         """결과 프레임 파일의 로컬 file:// URL 반환."""

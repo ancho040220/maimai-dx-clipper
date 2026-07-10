@@ -537,8 +537,9 @@ def process_live_clips(
         change   = entry.get("change", 0)
         mode     = entry.get("mode")
         result_t = entry.get("timestamp", 0)
+        det_id   = entry.get("_detection_id", "")
         print(f"    [{i+1}/{n}] 💾  {final_file.name}")
-        print(f"[HL_ADD] {json.dumps({'file': final_file.name, 't': fmt_time(result_t), 'mode': mode, 'delta': change, 'size': f'{size_mb} MB', 'status': 'queued'}, ensure_ascii=False)}")
+        print(f"[HL_ADD] {json.dumps({'id': det_id, 'file': final_file.name, 't': fmt_time(result_t), 'mode': mode, 'delta': change, 'size': f'{size_mb} MB', 'status': 'queued'}, ensure_ascii=False)}")
 
         _save_clip_meta(final_file, title, desc)
 

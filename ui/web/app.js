@@ -1296,7 +1296,12 @@ function ScreenHighlights({ bridge, highlights, setHighlights }) {
             <div key={h.file} className="card" style={{ padding: 18, minWidth: 0 }}>
               <div className="row gap-14" style={{ alignItems: "flex-start" }}>
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <VodThumb w={120} h={68} />
+                  {h.id ? <FrameThumb bridge={bridge} detId={h.id} /> : <VodThumb w={120} h={68} />}
+                  <button onClick={() => bridge && bridge.open_clip(h.file)} title="클립 재생"
+                          style={{ position: "absolute", top: 4, left: 4, width: 22, height: 22,
+                                   borderRadius: 4, border: "none", cursor: "pointer",
+                                   background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11,
+                                   display: "flex", alignItems: "center", justifyContent: "center" }}>▶</button>
                   {h.duration && (
                     <div style={{
                       position: "absolute", bottom: 4, right: 4,
@@ -1315,7 +1320,9 @@ function ScreenHighlights({ bridge, highlights, setHighlights }) {
                     <UploadChip status={h.status} />
                   </div>
                   <div className="row gap-6">
-                    {h.mode && <span className={`chip ${modeClass(h.mode)}`}>{modeLabel(h.mode)}</span>}
+                    {h.mode
+                      ? <span className={`chip ${modeClass(h.mode)}`}>{modeLabel(h.mode)}</span>
+                      : <span className="chip" style={{ opacity: 0.75 }} title="역추적 실패 — 결과 3분 전으로 추정한 시작 지점">시작 추정</span>}
                     {h.size && <span className="chip mono num">{h.size}</span>}
                   </div>
                   <div className="muted mono" style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1943,7 +1950,10 @@ function App() {
       b.status_result.connect((json) => setVodInfo(JSON.parse(json)));
       b.status_error.connect((msg)  => setVodInfo({ error: msg }));
 
-      b.log_line.connect((json) => setLog(prev => [...prev, JSON.parse(json)]));
+      b.log_line.connect((json) => setLog(prev => {
+        const next = [...prev, JSON.parse(json)];
+        return next.length > 1000 ? next.slice(-1000) : next;   // 장시간 세션 렌더 성능 (A-27)
+      }));
 
       b.detection_added.connect((json)  => setDetections(prev => [...prev, JSON.parse(json)]));
       b.detection_updated.connect((json) => {

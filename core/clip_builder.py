@@ -112,6 +112,7 @@ def _cut_and_upload_clips(
         local_result_ts     = result_ts - start_dl
         local_play_ts, mode = lookback_map.get(i, (None, None))
         mode_label          = MODE_LABELS.get(mode, "미확인")
+        det_id              = entry.get("_detection_id", f"result_{i+1}")
 
         if local_play_ts is not None:
             actual_play_ts          = local_play_ts + start_dl
@@ -119,7 +120,6 @@ def _cut_and_upload_clips(
             entry["play_url"]       = yt_timestamp_url(url, actual_play_ts)
             entry["mode"]           = mode
             print(f"    ✓ {mode_label} 시작: {fmt_time(actual_play_ts)}")
-            det_id = entry.get("_detection_id", f"result_{i+1}")
             print(f"[DETECT_UPD] {json.dumps({'id': det_id, 'play_t': fmt_time(actual_play_ts), 'mode': mode, 'song_title': entry.get('song_title'), 'difficulty': entry.get('difficulty'), 'achievement': entry.get('achievement'), 'rank': entry.get('rank'), 'internal_level': entry.get('internal_level')}, ensure_ascii=False)}")
         else:
             local_play_ts = max(0.0, local_result_ts - 180)
@@ -138,7 +138,7 @@ def _cut_and_upload_clips(
             size_mb = round(out_file.stat().st_size / 1024 / 1024, 1) if out_file.exists() else 0
             dur_s   = int(clip_end - clip_start)
             dur_fmt = f"{dur_s // 60}:{dur_s % 60:02d}"
-            print(f"[HL_ADD] {json.dumps({'file': out_file.name, 't': fmt_time(result_ts), 'mode': mode, 'delta': change, 'size': f'{size_mb} MB', 'duration': dur_fmt, 'status': 'queued'}, ensure_ascii=False)}")
+            print(f"[HL_ADD] {json.dumps({'id': det_id, 'file': out_file.name, 't': fmt_time(result_ts), 'mode': mode, 'delta': change, 'size': f'{size_mb} MB', 'duration': dur_fmt, 'status': 'queued'}, ensure_ascii=False)}")
         else:
             print("    ⚠️  영상 커팅에 실패했습니다. ffmpeg 설치 상태를 확인하세요.")
             temp_file.unlink(missing_ok=True)
