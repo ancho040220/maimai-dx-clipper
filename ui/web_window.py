@@ -28,8 +28,23 @@ _WEB_DIR = Path(__file__).parent / "web"
 
 class WebWindow(QMainWindow):
     def closeEvent(self, event):
-        self._bridge.stop_pipeline()
+        try:
+            self._bridge.stop_pipeline()
+        except Exception:
+            pass
+        # os._exit는 5초 QTimer 정리·atexit를 건너뛰고, 자식 프로세스(ffmpeg 녹화·스캐너
+        # 워커·yt-dlp)는 별도 프로세스라 부모 종료로도 안 죽는다 → 트리를 직접 종료
         import os
+        try:
+            import psutil
+            me = psutil.Process(os.getpid())
+            for child in me.children(recursive=True):
+                try:
+                    child.kill()
+                except psutil.Error:
+                    pass
+        except Exception:
+            pass
         os._exit(0)
 
     def __init__(self):

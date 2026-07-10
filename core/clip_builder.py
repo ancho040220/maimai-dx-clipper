@@ -85,12 +85,16 @@ def _cut_and_upload_clips(
     uploader: Optional[YouTubeUploader],
     start_dl_map: dict,
     lookback_map: dict,
+    cancel_event=None,
 ) -> None:
     """각 항목별 클립 커팅 → 업로드. OCR 결과는 history 항목에 이미 적용되어 있어야 함."""
     n = len(history)
     pending_uploads: list[str] = []
 
     for i, entry in enumerate(history):
+        if cancel_event is not None and cancel_event.is_set():
+            print("  🛑  중단 요청 — 남은 클립 커팅/업로드를 중단합니다.")
+            break
         result_ts  = entry["timestamp"]
         change     = entry.get("change", 0)
         new_rating = entry["current_rating"]

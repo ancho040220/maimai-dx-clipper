@@ -321,11 +321,13 @@ class Bridge(QObject):
 
         self._ocr_event          = threading.Event()
         self._confirm_event      = threading.Event()
+        self._cancel_event       = threading.Event()
         self._confirmed_history  = selected_history
         self._ocr_payload_holder = []
 
         ocr_event             = self._ocr_event
         confirm_event         = self._confirm_event
+        cancel_event          = self._cancel_event
         confirmed_history_ref = selected_history
         ocr_payload_holder    = self._ocr_payload_holder
 
@@ -345,6 +347,7 @@ class Bridge(QObject):
                     skip_ocr_edit=skip_ocr_edit,
                     ocr_payload_holder=ocr_payload_holder,
                     song_ocr=user_cfg.get("songOcr", True),
+                    cancel_event=cancel_event,
                 )
             else:
                 process_vod_entries(
@@ -358,6 +361,7 @@ class Bridge(QObject):
                     skip_ocr_edit=skip_ocr_edit,
                     ocr_payload_holder=ocr_payload_holder,
                     skip_ocr=not song_ocr,
+                    cancel_event=cancel_event,
                 )
 
         self._worker = PipelineWorker(_run_clipping)

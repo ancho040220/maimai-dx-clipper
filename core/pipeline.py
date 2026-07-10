@@ -239,6 +239,7 @@ def _run_download_and_lookback(
     output_dir: Path,
     max_lookback: float,
     num_lb_workers: int,
+    cancel_event=None,
 ) -> tuple:
     """Phase 1+2: 병렬 다운로드 후 완료 즉시 역추적. (start_dl_map, lookback_map) 반환."""
     n          = len(history)
@@ -266,6 +267,8 @@ def _run_download_and_lookback(
             dl_done = 0
             print(f"[DL_PROG] {json.dumps({'done': 0, 'total': n}, ensure_ascii=False)}")
             for future in as_completed(dl_futures):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 i, start_dl, result_ts, temp_file = dl_futures[future]
                 ok = future.result()
                 dl_done += 1
@@ -288,6 +291,8 @@ def _run_download_and_lookback(
         lb_done  = 0
         lb_total = len(lookback_async)
         for i, ar in lookback_async.items():
+            if cancel_event is not None and cancel_event.is_set():
+                break
             try:
                 idx, local_play_ts, mode = ar.get(timeout=TIMEOUT_LOOKBACK_PER_ITEM)
                 lookback_map[idx] = (local_play_ts, mode)
@@ -324,6 +329,7 @@ def process_vod_entries(
     skip_ocr_edit: bool = False,
     ocr_payload_holder=None,
     skip_ocr: bool = False,
+    cancel_event=None,
 ) -> None:
     """① OCR + ② 병렬 다운로드/역추적 (동시 실행)  ③ OCR 확인 대기  ④ 클립 커팅 + 업로드."""
 
@@ -357,7 +363,7 @@ def process_vod_entries(
     # ── Thread B: Phase 1+2 — 다운로드 + 역추적 ─────────────────────────────
     num_lb_workers = min(n, 4) if cuda_ok else min(n, multiprocessing.cpu_count())
     start_dl_map, lookback_map = _run_download_and_lookback(
-        history, url, output_dir, max_lookback, num_lb_workers,
+        history, url, output_dir, max_lookback, num_lb_workers, cancel_event=cancel_event,
     )
 
     if not lookback_map:
@@ -385,12 +391,17 @@ def process_vod_entries(
     else:
         _auto_apply_ocr(_payload, history)
 
+    # 중단 요청 시 Phase 3(커팅+업로드) 진입 안 함 — confirm_event.wait이 취소로 풀린 경우 포함
+    if cancel_event is not None and cancel_event.is_set():
+        print("  🛑  중단 요청 — 클립 커팅/업로드를 건너뜁니다.")
+        return
+
     # ── Phase 3 — 클립 커팅 + 업로드 ─────────────────────────────────────────
     final_history = confirmed_history_ref if confirmed_history_ref is not None else history
     print(f"\n▶ Phase 3 — 클립 커팅 + 업로드 ({len(final_history)}개)")
     _cut_and_upload_clips(
         final_history, url, output_dir, uploader,
-        start_dl_map, lookback_map,
+        start_dl_map, lookback_map, cancel_event=cancel_event,
     )
 
 
@@ -406,6 +417,7 @@ def process_live_clips(
     skip_ocr_edit: bool = False,
     ocr_payload_holder=None,
     song_ocr: bool = True,
+    cancel_event=None,
 ) -> None:
     """라이브 Phase 2: Phase 1에서 저장된 클립에 대해 OCR 편집 + 이름 변경 + 업로드.
 
@@ -484,6 +496,9 @@ def process_live_clips(
     print(f"\n▶ 라이브 Phase 2 — 클립 처리 + 업로드 ({len(final_history)}개)")
 
     for i, entry in enumerate(final_history):
+        if cancel_event is not None and cancel_event.is_set():
+            print("  🛑  중단 요청 — 남은 클립 업로드를 중단합니다.")
+            break
         clip_path = Path(entry.get("clip_path", ""))
         if not clip_path.exists():
             print(f"    [{i+1}/{n}] ⚠️  클립 파일 없음: {clip_path.name}")
