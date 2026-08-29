@@ -135,24 +135,20 @@ YouTube에 영상을 자동으로 업로드하기 위한 Google 인증 파일입
 
 ---
 
-## CLOVA OCR 설정 (선택)
+## 곡명 인식 방식
 
-곡명 인식 정확도를 높이기 위해 **Naver Cloud Platform CLOVA OCR**을 사용합니다.  
-없어도 레이팅 변동 감지 및 클립 생성은 정상 동작합니다.
+결과 화면의 **자켓 이미지**를 곡 DB의 자켓과 대조해 곡을 식별합니다.
+API 키나 별도 설정이 필요 없고, 첫 분석 시 자켓을 자동으로 내려받습니다.
 
-1. [Naver Cloud Platform](https://www.ncloud.com) 가입 후 로그인
-2. **CLOVA OCR** 서비스에서 커스텀 도메인 생성
-3. **API Gateway** 탭에서 **Invoke URL** 복사
-4. **Secret Key** 복사
-5. `config/credentials/clova_ocr.txt` 파일을 다음 형식으로 작성:
+1. 결과 화면에서 자켓 영역을 잘라 곡 DB의 자켓 1,600여 장과 대조
+2. 일치도가 충분히 높고 2등과 차이가 크면 그대로 확정
+3. 자켓이 비슷한 곡끼리 접전이면 **곡명 OCR**(PaddleOCR)로 후보를 가림
+4. 일치하는 자켓이 없으면 **미등록 곡**으로 처리 (곡 DB에 아직 없는 신곡)
 
-```
-CLOVA_OCR_URL=여기에_Invoke_URL_붙여넣기
-CLOVA_OCR_SECRET=여기에_Secret_Key_붙여넣기
-```
-
-> CLOVA OCR이 없으면 곡명·달성률·난이도 추출이 동작하지 않습니다.  
-> 레이팅 변동 감지와 클립 생성은 정상 동작하지만, 스캔 결과에 곡 정보가 표시되지 않습니다.
+> 자켓 인덱스는 `cache/jacket_index.npz`에 저장됩니다(약 2.5MB).  
+> 곡 DB에 신곡이 추가되면 환경 점검 패널의 **자켓 인덱스** 항목에 알림이 뜨고,  
+> **⬇️ 업데이트** 버튼으로 새 곡의 자켓만 받을 수 있습니다.  
+> 우타게(宴会場) 보면은 레이팅에 반영되지 않아 인식 대상에서 제외됩니다.
 
 ---
 
@@ -162,7 +158,6 @@ CLOVA_OCR_SECRET=여기에_Secret_Key_붙여넣기
 |-----------|------|------|
 | `client_secret.json` | Google API 인증 (YouTube 업로드용) | 한 번만 |
 | `youtube_token.json` | 자동 생성됨 | 자동 갱신 |
-| `clova_ocr.txt` | CLOVA OCR Invoke URL + Secret Key | 한 번만 |
 
 > YouTube / maimai DX NET 쿠키는 파일 불필요 — Firefox 로그인 세션을 자동으로 읽습니다.
 
@@ -171,7 +166,7 @@ CLOVA_OCR_SECRET=여기에_Secret_Key_붙여넣기
 ## 오류가 날 때
 
 > 💡 프로그램 시작 시 **환경 점검**이 자동으로 실행됩니다.  
-> ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · CLOVA OCR · maimai DB · GPU 8개 항목을 확인합니다.
+> ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · 자켓 인덱스 · maimai DB · GPU 8개 항목을 확인합니다.
 
 항목은 중요도에 따라 분류됩니다.
 
@@ -182,7 +177,7 @@ CLOVA_OCR_SECRET=여기에_Secret_Key_붙여넣기
 | YOLO 모델 | 필수 | 오류 시 시작 불가 |
 | YouTube 로그인 | 필수 | 오류 시 시작 불가 |
 | Google 인증 파일 | 조건부 | **자동 업로드 ON** 일 때만 필수 |
-| CLOVA OCR | 조건부 | **곡 정보 추출 ON** 일 때만 필수 (없으면 곡명·달성률·난이도 추출 불가) |
+| 자켓 인덱스 | 조건부 | **곡 정보 추출 ON** 일 때만 필수 (첫 실행 시 자켓 다운로드에 인터넷 필요) |
 | maimai DB | 조건부 | **곡 정보 추출 ON** 일 때만 필수 (없으면 퍼지 매칭 불가) |
 | GPU(CUDA) | 선택 | 없어도 시작 가능 (CPU로 동작, 속도 저하) |
 
@@ -196,9 +191,9 @@ CLOVA_OCR_SECRET=여기에_Secret_Key_붙여넣기
 | 환경 점검 — YOLO 모델 오류 | `best_nano.pt` 파일이 프로젝트 폴더 루트에 있는지 확인 |
 | 환경 점검 — YouTube 로그인 경고 | Firefox에서 youtube.com에 로그인했는지 확인 |
 | 환경 점검 — Google 인증 파일 경고 | `config/credentials/client_secret.json` 준비 여부 확인 (자동 업로드 ON인 경우) |
-| 환경 점검 — CLOVA OCR 오류 | `config/credentials/clova_ocr.txt` 파일과 URL·Secret Key가 올바른지 확인 |
+| 환경 점검 — 자켓 인덱스 오류 | 인터넷 연결 확인 (자켓 다운로드에 필요). **⬇️ 업데이트** 버튼으로 다시 시도할 수 있습니다 |
 | Sign in to confirm you're not a bot | Firefox에서 YouTube에 로그인했는지 확인하세요. |
-| 곡 정보가 표시되지 않음 | CLOVA OCR 설정 및 **곡 정보 추출** 토글이 ON인지 확인 |
+| 곡 정보가 표시되지 않음 | **곡 정보 추출** 토글이 ON인지 확인 |
 | YouTube 업로드 실패 / 인증 오류 | 환경 점검 패널의 **🔑 재인증** 버튼 클릭, 또는 `config/credentials/youtube_token.json` 삭제 후 재실행 |
 | CUDA / torch 오류 | `setup/setup.bat` 다시 실행 |
 | Python을 찾을 수 없음 | Python 재설치 (PATH 체크 확인) |

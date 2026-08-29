@@ -320,7 +320,7 @@ class LiveMonitor:
             "clip_path": str(out_file),
         }
 
-        # 결과 화면 프레임 추출 + 이미지 저장 — CLOVA OCR은 Phase 2(클립 선택 후)에서 실행
+        # 결과 화면 프레임 추출 + 이미지 저장 — 곡 정보 분석은 Phase 2(클립 선택 후)에서 실행
         if not self.skip_ocr:
             try:
                 ocr_frame = self.buffer.get_frame_near(result_ts_wall)

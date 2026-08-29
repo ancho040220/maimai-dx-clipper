@@ -51,7 +51,7 @@ const ENV_CHECK_INITIAL = [
   { id: "yolo",            label: "YOLO 모델",          status: "loading", desc: "영상에서 게임 화면 영역을 감지하는 AI 모델" },
   { id: "firefox_youtube", label: "YouTube 로그인",     status: "loading", desc: "영상 다운로드 및 스트림 접근에 사용" },
   { id: "client_secret",   label: "Google 인증 파일",   status: "loading", desc: "YouTube 자동 업로드 인증에만 사용" },
-  { id: "clova_ocr",       label: "CLOVA OCR",          status: "loading", desc: "일본어 곡명 인식에 사용하는 CLOVA OCR API" },
+  { id: "jacket_index",    label: "자켓 인덱스",         status: "loading", desc: "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)" },
   { id: "song_db",         label: "maimai DB",          status: "loading", desc: "곡명·레벨 정보 (gekichumai/dxrating, 7일 캐시)" },
   { id: "cuda",            label: "GPU(CUDA)",          status: "loading", desc: "AI 분석 속도 향상 (없으면 CPU로 동작)" },
 ];
@@ -65,7 +65,7 @@ const ITEM_ROLE = {
   yolo:            "required",
   firefox_youtube: "required",
   client_secret:   "conditional",
-  clova_ocr:       "conditional_ocr",
+  jacket_index:    "conditional_ocr",
   song_db:         "conditional_ocr",
   cuda:            "optional",
 };
@@ -266,7 +266,7 @@ function UploadChip({ status }) {
 
 // ── EnvCheck ──────────────────────────────────────────────────────────────────
 
-function EnvCheckItem({ item, role, onAction }) {
+function EnvCheckItem({ item, role, onAction, actionLabel }) {
   const descEl = item.desc
     ? <span style={{ fontSize: 11, color: "var(--muted-2, var(--muted))", marginTop: 1 }}>{item.desc}</span>
     : null;
@@ -321,7 +321,7 @@ function EnvCheckItem({ item, role, onAction }) {
           </span>
           {onAction && item.status !== "ok" && item.status !== "loading" && (
             <button className="btn ghost sm" onClick={onAction} style={{ padding: "1px 8px", fontSize: 11 }}>
-              🔑 재인증
+              {actionLabel || "🔑 재인증"}
             </button>
           )}
         </div>
@@ -331,7 +331,7 @@ function EnvCheckItem({ item, role, onAction }) {
   );
 }
 
-function EnvCheck({ items, onRecheck, onYoutubeReauth, autoUpload, songOcr }) {
+function EnvCheck({ items, onRecheck, onYoutubeReauth, onJacketUpdate, autoUpload, songOcr }) {
   return (
     <div className="card col" style={{ padding: "16px 22px", gap: 10, marginBottom: 18 }}>
       <div className="row between">
@@ -346,7 +346,9 @@ function EnvCheck({ items, onRecheck, onYoutubeReauth, autoUpload, songOcr }) {
             key={item.id}
             item={item}
             role={getEffectiveRole(item.id, autoUpload, songOcr)}
-            onAction={item.id === "client_secret" ? onYoutubeReauth : undefined}
+            onAction={item.id === "client_secret" ? onYoutubeReauth
+                    : item.id === "jacket_index"  ? onJacketUpdate : undefined}
+            actionLabel={item.id === "jacket_index" ? "⬇️ 업데이트" : undefined}
           />
         ))}
       </div>
@@ -777,6 +779,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
       {/* Env check */}
       <EnvCheck items={envCheckItems} onRecheck={onRecheck}
         onYoutubeReauth={() => bridge && bridge.reauthenticate_youtube()}
+        onJacketUpdate={() => bridge && bridge.update_jacket_index()}
         autoUpload={autoUpload} songOcr={songOcr} />
 
       {/* Stats */}
@@ -1226,7 +1229,7 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
 
       <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.8 }}>
         게임 모드·플레이 시작 시간은 역추적 후 확정됩니다.<br />
-        곡명·난이도·달성률·레벨은 CLOVA OCR로 인식한 결과입니다. OCR 신뢰도가 낮거나 인식에 실패한 항목은 빈 칸으로 표시됩니다. ✏️ 수정 버튼으로 직접 입력하세요.
+        곡명은 자켓 이미지 매칭으로, 난이도·달성률은 화면 인식으로 판별한 결과입니다. 신뢰도가 낮거나 인식에 실패한 항목은 빈 칸으로 표시됩니다. ✏️ 수정 버튼으로 직접 입력하세요.
       </div>
     </div>
   );
@@ -1713,7 +1716,7 @@ const ManualLive = () => (
       <ManualStep n="4">수집 중단 후 <strong>스캔 결과</strong> 화면으로 자동 이동</ManualStep>
       <ManualStep n="5">저장할 클립을 체크박스로 선택 → <strong>클립 생성 시작</strong>
         <ul style={{ margin: "6px 0 0", paddingLeft: 20, lineHeight: 1.85 }}>
-          <li>CLOVA OCR이 선택된 항목만 분석 (한도 절약)</li>
+          <li>선택한 항목만 곡 정보 분석</li>
           <li>곡 정보가 틀렸다면 <strong>✏️ 수정</strong>으로 직접 수정</li>
           <li>자동 업로드 ON이면 YouTube에 업로드</li>
         </ul>
@@ -1723,18 +1726,17 @@ const ManualLive = () => (
   </ManualSection>
 );
 
-const ManualClova = () => (
-  <ManualSection num="08" title="CLOVA OCR 설정 (선택)" subtitle="곡명 인식 정확도를 높이기 위해 Naver Cloud Platform CLOVA OCR을 사용합니다.">
-    <ManualNote kind="info">없어도 레이팅 변동 감지 및 클립 생성은 정상 동작합니다.</ManualNote>
+const ManualJacket = () => (
+  <ManualSection num="08" title="곡명 인식 방식" subtitle="결과 화면의 자켓 이미지를 곡 DB의 자켓과 대조해 곡을 식별합니다.">
+    <ManualNote kind="info">별도 설정이나 API 키가 필요 없습니다. 첫 분석 시 자켓 이미지를 자동으로 내려받습니다.</ManualNote>
     <div className="col">
-      <ManualStep n="1"><ManualLink href="https://www.ncloud.com">Naver Cloud Platform</ManualLink> 가입 후 로그인</ManualStep>
-      <ManualStep n="2"><strong>CLOVA OCR</strong> 서비스에서 커스텀 도메인 생성</ManualStep>
-      <ManualStep n="3"><strong>API Gateway</strong> 탭에서 <strong>Invoke URL</strong> 복사</ManualStep>
-      <ManualStep n="4"><strong>Secret Key</strong> 복사</ManualStep>
-      <ManualStep n="5"><ManualCode>config/credentials/clova_ocr.txt</ManualCode> 파일을 다음 형식으로 작성:</ManualStep>
+      <ManualStep n="1">결과 화면에서 자켓 영역을 잘라 곡 DB의 자켓 <strong>1,600여 장</strong>과 대조</ManualStep>
+      <ManualStep n="2">일치도가 충분히 높고 2등과 차이가 크면 그대로 확정</ManualStep>
+      <ManualStep n="3">자켓이 비슷한 곡끼리 접전이면 <strong>곡명 OCR</strong>로 후보를 가림</ManualStep>
+      <ManualStep n="4">일치하는 자켓이 없으면 <strong>미등록 곡</strong>으로 처리 (곡 DB에 아직 없는 신곡)</ManualStep>
     </div>
-    <ManualBlock>{`CLOVA_OCR_URL=여기에_Invoke_URL_붙여넣기\nCLOVA_OCR_SECRET=여기에_Secret_Key_붙여넣기`}</ManualBlock>
-    <ManualNote kind="warn">CLOVA OCR이 없으면 곡명·달성률·난이도 추출이 동작하지 않습니다. 레이팅 변동 감지와 클립 생성은 정상 동작하지만, 스캔 결과에 곡 정보가 표시되지 않습니다.</ManualNote>
+    <ManualNote kind="info">자켓 인덱스는 <ManualCode>cache/jacket_index.npz</ManualCode>에 저장됩니다(약 2.5MB). 곡 DB에 신곡이 추가되면 환경 점검 패널의 <strong>자켓 인덱스</strong> 항목에 알림이 뜨고, <strong>⬇️ 업데이트</strong> 버튼으로 새 곡의 자켓만 받을 수 있습니다.</ManualNote>
+    <ManualNote kind="warn">우타게(宴会場) 보면은 레이팅에 반영되지 않아 인식 대상에서 제외됩니다.</ManualNote>
   </ManualSection>
 );
 
@@ -1757,11 +1759,6 @@ const ManualCreds = () => (
           <td>자동 생성됨</td>
           <td><span className="chip success">자동 갱신</span></td>
         </tr>
-        <tr>
-          <td><ManualCode>clova_ocr.txt</ManualCode></td>
-          <td>CLOVA OCR Invoke URL + Secret Key</td>
-          <td><span className="chip">한 번만</span></td>
-        </tr>
       </tbody>
     </table>
   </ManualSection>
@@ -1769,7 +1766,7 @@ const ManualCreds = () => (
 
 const ManualErrors1 = () => (
   <ManualSection num="10" title="오류가 날 때 — 환경 점검" subtitle="프로그램 시작 시 8개 항목을 자동으로 확인합니다.">
-    <ManualNote kind="info">프로그램 시작 시 <strong>환경 점검</strong>이 자동 실행됩니다. ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · CLOVA OCR · maimai DB · GPU 8개 항목을 확인합니다.</ManualNote>
+    <ManualNote kind="info">프로그램 시작 시 <strong>환경 점검</strong>이 자동 실행됩니다. ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · 자켓 인덱스 · maimai DB · GPU 8개 항목을 확인합니다.</ManualNote>
     <table className="tbl" style={{ background: "transparent" }}>
       <thead><tr>
         <th>항목</th>
@@ -1782,7 +1779,7 @@ const ManualErrors1 = () => (
         <tr><td style={{ fontWeight: 600 }}>YOLO 모델</td><td><span className="chip danger">필수</span></td><td>오류 시 시작 불가</td></tr>
         <tr><td style={{ fontWeight: 600 }}>YouTube 로그인</td><td><span className="chip danger">필수</span></td><td>오류 시 시작 불가</td></tr>
         <tr><td style={{ fontWeight: 600 }}>Google 인증 파일</td><td><span className="chip warning">조건부</span></td><td>자동 업로드 ON일 때만 필수</td></tr>
-        <tr><td style={{ fontWeight: 600 }}>CLOVA OCR</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
+        <tr><td style={{ fontWeight: 600 }}>자켓 인덱스</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>maimai DB</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>GPU(CUDA)</td><td><span className="chip">선택</span></td><td>없어도 시작 가능 (CPU 동작)</td></tr>
       </tbody>
@@ -1802,9 +1799,9 @@ const ManualErrors2 = () => (
         <tr><td>YOLO 모델 오류</td><td><ManualCode>best_nano.pt</ManualCode> 파일이 프로젝트 루트에 있는지 확인</td></tr>
         <tr><td>YouTube 로그인 경고</td><td>Firefox에서 youtube.com에 로그인했는지 확인</td></tr>
         <tr><td>Google 인증 파일 경고</td><td><ManualCode>config/credentials/client_secret.json</ManualCode> 준비 여부 확인</td></tr>
-        <tr><td>CLOVA OCR 오류</td><td><ManualCode>clova_ocr.txt</ManualCode> 파일과 URL · Secret Key 확인</td></tr>
+        <tr><td>자켓 인덱스 오류</td><td>인터넷 연결 확인 (자켓 다운로드에 필요). 첫 분석 시 자동으로 다시 시도합니다</td></tr>
         <tr><td>"Sign in to confirm you're not a bot"</td><td>Firefox에서 YouTube 로그인 확인</td></tr>
-        <tr><td>곡 정보가 표시되지 않음</td><td>CLOVA OCR 설정 + <strong>곡 정보 추출</strong> 토글 ON 확인</td></tr>
+        <tr><td>곡 정보가 표시되지 않음</td><td><strong>곡 정보 추출</strong> 토글 ON 확인</td></tr>
         <tr><td>YouTube 업로드 실패 / 인증 오류</td><td>환경 점검 패널의 <strong>🔑 재인증</strong> 클릭</td></tr>
         <tr><td>Python을 찾을 수 없음</td><td>Python 재설치 (PATH 체크 확인)</td></tr>
       </tbody>
@@ -1823,7 +1820,7 @@ function ScreenManual({ setScreen }) {
     { id: "google2",  label: "client_secret.json 발급", num: "05", Comp: ManualGoogle2 },
     { id: "run",      label: "매번 실행하기",           num: "06", Comp: ManualRun     },
     { id: "live",     label: "라이브 모드",             num: "07", Comp: ManualLive    },
-    { id: "clova",    label: "CLOVA OCR",              num: "08", Comp: ManualClova   },
+    { id: "jacket",   label: "곡명 인식 방식",           num: "08", Comp: ManualJacket  },
     { id: "creds",    label: "credentials 파일",       num: "09", Comp: ManualCreds   },
     { id: "errors1",  label: "오류 해결 — 환경 점검",    num: "10", Comp: ManualErrors1 },
     { id: "errors2",  label: "오류 해결 — 해결법",      num: "11", Comp: ManualErrors2 },

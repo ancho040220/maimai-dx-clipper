@@ -40,19 +40,14 @@ _tess_default = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 TESSERACT_CMD = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract") or _tess_default
 TESS_CONFIG   = "--psm 7 --oem 3 -c tessedit_char_whitelist=0123456789"
 
-# ── CLOVA OCR ──────────────────────────────────────────────────────────────────
-def _load_clova_credentials() -> tuple[str, str]:
-    path = CREDENTIALS_DIR / "clova_ocr.txt"
-    if not path.exists():
-        return "", ""
-    pairs = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if "=" in line:
-            k, v = line.strip().split("=", 1)
-            pairs[k.strip()] = v.strip()
-    return pairs.get("CLOVA_OCR_URL", ""), pairs.get("CLOVA_OCR_SECRET", "")
-
-CLOVA_OCR_URL, CLOVA_OCR_SECRET = _load_clova_credentials()
+# ── 곡명 식별 (자켓 매칭 + PaddleOCR) ─────────────────────────────────────────
+JACKET_CDN_URL         = "https://shama.dxrating.net/images/cover/v2/{}.jpg"
+JACKET_FEAT_N          = 16       # 자켓 특징 해상도 (N×N×3). 올릴수록 압축·블러 불일치가 증폭돼 오히려 불리
+JACKET_UTAGE_CATEGORY  = "宴会場"  # 우타게는 원곡 자켓을 공유하므로 인덱싱 제외
+JACKET_CONFIRM_MIN     = 0.72     # 이 이상이면 등록곡으로 간주 (미만은 미등록 신곡)
+JACKET_MARGIN_MIN      = 0.10     # 1등-2등 차가 이 미만이면 OCR로 판별을 넘김
+JACKET_CANDIDATE_MIN   = 0.60     # OCR 판별 시 후보로 남길 최소 점수
+TITLE_OCR_LANG         = "japan"  # 곡명 OCR 모델 (달성률·난이도는 en 모델 유지)
 
 # ── YOLO ───────────────────────────────────────────────────────────────────────
 MODEL_PATH = str(PROJECT_DIR / "best_nano.pt")

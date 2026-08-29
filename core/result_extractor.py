@@ -8,11 +8,10 @@ from typing import Optional
 import cv2
 import numpy as np
 
-import base64
-import uuid
-import requests as _requests
-
-from config.settings import CLOVA_OCR_URL, CLOVA_OCR_SECRET
+from config.settings import (
+    JACKET_CANDIDATE_MIN, JACKET_CONFIRM_MIN, JACKET_MARGIN_MIN, TITLE_OCR_LANG,
+)
+from core import jacket_index
 from data.song_db import get_internal_level
 
 _paddle_ocr = None
@@ -30,58 +29,37 @@ def _get_paddle_ocr():
     return _paddle_ocr
 
 
-def _clova_ocr(img: np.ndarray, max_attempts: int = 2) -> str:
-    """CLOVA OCR API로 이미지에서 텍스트 추출 (1000×1000 전체 프레임).
+_title_ocr = None
 
-    일시적 실패(inferResult=FAILURE / 연결 오류 / HTTP 5xx)는 재시도한다.
-    HTTP 400(쿼터 초과 등)은 재시도해도 무의미하므로 즉시 반환.
+# 곡명 바 영역 (1000×1000 크롭 기준). 남색 단색 바 위 흰 글씨라 배경 간섭이 없다.
+_TITLE_Y1, _TITLE_Y2, _TITLE_X1, _TITLE_X2 = 195, 236, 245, 825
+
+
+def _get_title_ocr():
+    """곡명 전용 PaddleOCR(일본어). 달성률·난이도용 en 모델과 별도 인스턴스."""
+    global _title_ocr
+    if _title_ocr is None:
+        from paddleocr import PaddleOCR
+        _title_ocr = PaddleOCR(use_angle_cls=False, lang=TITLE_OCR_LANG, show_log=False)
+    return _title_ocr
+
+
+def ocr_song_title(img: np.ndarray) -> str:
+    """곡명 바를 OCR해 원문 텍스트를 반환. 실패 시 빈 문자열.
+
+    업스케일하면 오히려 인식률이 떨어지므로 크롭을 그대로 넣는다.
     """
-    _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-    img_b64 = base64.b64encode(buf).decode('utf-8')
-    headers = {"X-OCR-SECRET": CLOVA_OCR_SECRET, "Content-Type": "application/json"}
-
-    def _retry_note(attempt):
-        return f" — 재시도 {attempt}/{max_attempts - 1}" if attempt < max_attempts else ""
-
-    for attempt in range(1, max_attempts + 1):
-        payload = {
-            "version": "V2",
-            "requestId": str(uuid.uuid4()),
-            "timestamp": 0,
-            "images": [{"format": "jpg", "name": "img", "data": img_b64}],
-        }
-        try:
-            resp = _requests.post(CLOVA_OCR_URL, json=payload, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                image = resp.json().get("images", [{}])[0]
-                if image.get("inferResult") == "SUCCESS":
-                    title = image.get("title", {})
-                    if title and title.get("inferText"):
-                        return title["inferText"]
-                    return " ".join(f["inferText"] for f in image.get("fields", []))
-                # inferResult=FAILURE 등 — 일시적, 재시도 대상
-                print(f"  ⚠️  CLOVA OCR 인식 실패 (inferResult={image.get('inferResult')}){_retry_note(attempt)}")
-            elif resp.status_code == 400:
-                try:
-                    err_code = resp.json().get("code", "")
-                except Exception:
-                    err_code = ""
-                if err_code == "0023":
-                    print("❌ CLOVA OCR 월 사용 한도 초과 — 이후 곡명 인식이 불가능합니다.")
-                else:
-                    print(f"  ⚠️  CLOVA OCR HTTP {resp.status_code}")
-                return ""   # 400은 재시도 무의미
-            else:
-                # 5xx 등 — 재시도 대상
-                print(f"  ⚠️  CLOVA OCR HTTP {resp.status_code}{_retry_note(attempt)}")
-        except Exception as e:
-            print(f"  ⚠️  CLOVA OCR 연결 실패: {e}{_retry_note(attempt)}")
-
-        if attempt < max_attempts:
-            time.sleep(1.0)
-
-    return ""
-
+    bar = img[_TITLE_Y1:_TITLE_Y2, _TITLE_X1:_TITLE_X2]
+    if bar.size == 0:
+        return ""
+    try:
+        result = _get_title_ocr().ocr(bar, cls=False)
+    except Exception as e:
+        print(f"  ⚠️  곡명 OCR 실패: {e}")
+        return ""
+    if not result or not result[0]:
+        return ""
+    return "".join(line[1][0] for line in result[0])
 
 
 # ── 원문자 변환 테이블 ─────────────────────────────────────────────────────────
@@ -316,6 +294,49 @@ def fuzzy_match(text: str, titles: list[str]) -> tuple[str, float]:
 
 # ── 메인 파이프라인 ───────────────────────────────────────────────────────────
 
+def identify_song(
+    frame:     np.ndarray,
+    titles:    list[str],
+    raw_songs: list[dict],
+) -> tuple[str, float, str]:
+    """자켓 매칭을 주 신호로, 곡명 OCR을 보조로 곡을 식별.
+
+    (곡명, 신뢰도, 판정 근거) 반환. 식별 실패 시 곡명은 빈 문자열.
+
+    자켓은 고유하지만 우타게 제외 후에도 픽셀이 동일한 곡이 1쌍 있고, 흰 배경
+    미니멀 자켓끼리는 점수가 접근한다. 그런 접전에서만 OCR이 후보를 가른다.
+    """
+    cands = jacket_index.match(frame, raw_songs, top_k=5)
+    text  = normalize_ocr(ocr_song_title(frame))
+
+    if cands:
+        top_title, top_score = cands[0]
+        margin = top_score - (cands[1][1] if len(cands) > 1 else 0.0)
+
+        if top_score >= JACKET_CONFIRM_MIN:
+            if margin >= JACKET_MARGIN_MIN:
+                return top_title, top_score, f"자켓 {top_score:.3f}"
+
+            # 후보 접전 — OCR로 가린다
+            shortlist = [t for t, sc in cands if sc >= JACKET_CANDIDATE_MIN]
+            if text and len(shortlist) > 1:
+                pick, ratio = fuzzy_match(text, shortlist)
+                if pick:
+                    return pick, ratio, f"자켓 {top_score:.3f}(접전) + OCR {ratio:.2f}"
+            # OCR이 없으면 1등을 쓰되 신뢰도는 마진으로 낮게 준다
+            return top_title, margin, f"자켓 {top_score:.3f}(접전, 마진 {margin:.3f})"
+
+    # 자켓 최고점이 기준 미달 = 미등록 신곡일 가능성이 높다.
+    # 이를 뒤집으려면 OCR이 확실해야 하므로 문턱을 높게 잡는다.
+    if text:
+        matched, ratio = fuzzy_match(text, titles)
+        if matched and ratio >= 0.75:
+            top = f"{cands[0][1]:.3f}" if cands else "없음"
+            return matched, ratio, f"OCR 단독 {ratio:.2f} (자켓 최고점 {top})"
+
+    return "", 0.0, "미인식"
+
+
 def extract_from_frames(
     frames_1000: list[np.ndarray],
     titles:      list[str],
@@ -324,7 +345,7 @@ def extract_from_frames(
     skip_sec:    float = 0.3,
     video_ts:    Optional[float] = None,
 ) -> Optional[SongResult]:
-    """가장 선명한 프레임 1장을 CLOVA OCR로 분석 → SongResult 반환. 실패 시 None."""
+    """가장 선명한 프레임 1장에서 곡 정보를 추출 → SongResult. 실패 시 None."""
     if not frames_1000:
         return None
 
@@ -339,13 +360,9 @@ def extract_from_frames(
     else:
         y1, y2, x_start = 165, 200, 150
 
-    text = normalize_ocr(_clova_ocr(best_frame))
-    if not text:
-        return None
-
-    matched_title, ratio = fuzzy_match(text, titles)
-    print(f"  [CLOVA] {matched_title or '미인식'} (정확도 {ratio:.2f})")
-    if not matched_title or ratio < 0.25:
+    matched_title, ratio, reason = identify_song(best_frame, titles, raw_songs)
+    print(f"  [곡명] {matched_title or '미인식'} — {reason}")
+    if not matched_title:
         return None
 
     diff           = detect_difficulty(best_frame, y1, x_start)

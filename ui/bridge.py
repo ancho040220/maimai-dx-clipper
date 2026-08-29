@@ -500,6 +500,33 @@ class Bridge(QObject):
         self._retry_workers.append(w)
 
     @pyqtSlot()
+    def update_jacket_index(self):
+        """자켓 인덱스 갱신 — 곡 DB에 새로 추가된 곡의 자켓만 내려받는다."""
+        from core.env_check import check_environment
+
+        def _run():
+            try:
+                from core import jacket_index
+                from data.song_db import load_song_db
+                _titles, raw = load_song_db("intl")
+                n = jacket_index.pending(raw)
+                if n == 0:
+                    self._emit_log("ok", "✅ 자켓 인덱스가 이미 최신입니다.")
+                else:
+                    self._emit_log("info", f"⬇️  새 곡 자켓 {n}개 다운로드 중...")
+                    hashes, _feats = jacket_index.ensure_index(raw, quiet=True)
+                    self._emit_log("ok", f"✅ 자켓 인덱스 갱신 완료 (총 {len(hashes)}곡)")
+            except Exception as e:
+                self._emit_log("err", f"❌ 자켓 인덱스 갱신 실패: {e}")
+            finally:
+                results = check_environment()
+                self.env_check_result.emit(json.dumps(results, ensure_ascii=False))
+
+        w = PipelineWorker(_run)
+        w.start()
+        self._retry_workers.append(w)
+
+    @pyqtSlot()
     def quit_app(self):
         from PyQt5.QtWidgets import QApplication
         QApplication.quit()
@@ -610,7 +637,7 @@ class Bridge(QObject):
             self._phase_step    = self._ocr_done
             self._phase_total   = self._ocr_total
             cnt = f"{self._ocr_done}/{self._ocr_total}" if self._ocr_total else str(self._ocr_done)
-            self._emit_phase(f"CLOVA OCR 분석 중... {cnt} 완료")
+            self._emit_phase(f"곡 정보 분석 중... {cnt} 완료")
             return
         if line.startswith("[DL_PROG]"):
             data = json.loads(line[9:].strip())

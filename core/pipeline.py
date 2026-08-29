@@ -394,7 +394,7 @@ def process_vod_entries(
         return
 
     # ── OCR thread 완료 대기 ─────────────────────────────────────────────────
-    # join은 다운로드 데드라인(BASE+PER*n)에 더해 CLOVA 처리 시간(항목당 15s)까지 커버해야
+    # join은 다운로드 데드라인(BASE+PER*n)에 더해 곡명 분석 시간(항목당 15s)까지 커버해야
     # 다운로드가 데드라인에 걸린 뒤에도 이미 받은 클립의 OCR 결과가 유실되지 않는다.
     print("\n  OCR 분석 완료 대기 중...")
     ocr_th.join(timeout=TIMEOUT_OCR_BATCH_BASE + (TIMEOUT_OCR_BATCH_PER + 15) * n)
@@ -447,14 +447,14 @@ def process_live_clips(
     from core.clip_builder import build_clip_metadata, _title_to_filename, _save_clip_meta
     from core.scanner_parallel import fmt_time
 
-    # CLOVA OCR — Phase 1에서 저장된 결과 화면 이미지로 분석
+    # 곡 정보 추출 — Phase 1에서 저장된 결과 화면 이미지로 분석
     if song_ocr:
         from data.song_db import load_song_db
         from core.result_extractor import extract_from_frames
         from config.settings import OCR_CONFIDENCE_MIN
         song_titles, raw_songs = load_song_db(region="intl")
         result_frames_dir = output_dir / "result_frames"
-        print(f"\n🔍  CLOVA OCR 분석 중... ({len(history)}개)")
+        print(f"\n🔍  곡 정보 분석 중... ({len(history)}개)")
         for entry in history:
             det_id     = entry.get("_detection_id", "")
             frame_path = result_frames_dir / f"{det_id}.jpg"

@@ -13,7 +13,7 @@ _DESCS = {
     "client_secret":   "YouTube 자동 업로드 인증에만 사용",
     "cuda":            "AI 분석 속도 향상 (없으면 CPU로 동작)",
     "firefox_youtube": "영상 다운로드 및 스트림 접근에 사용",
-    "clova_ocr":       "일본어 곡명 인식에 사용하는 CLOVA OCR API",
+    "jacket_index":    "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)",
     "song_db":         "곡명·레벨 정보 (gekichumai/dxrating, 7일 캐시)",
 }
 
@@ -159,54 +159,43 @@ def check_environment() -> list:
             }
         return {"id": "cuda", "label": "GPU(CUDA)", "status": "ok", "message": "정상"}
 
-    def _clova_ocr():
-        from config.settings import CREDENTIALS_DIR, CLOVA_OCR_URL, CLOVA_OCR_SECRET
-        cred_path = CREDENTIALS_DIR / "clova_ocr.txt"
-        if not cred_path.exists():
-            return {
-                "id": "clova_ocr", "label": "CLOVA OCR",
-                "status": "error",
-                "message": f"인증 파일이 없습니다. config/credentials/clova_ocr.txt를 생성하고 CLOVA_OCR_URL과 CLOVA_OCR_SECRET을 입력하세요.",
-            }
-        if not CLOVA_OCR_URL or not CLOVA_OCR_SECRET:
-            return {
-                "id": "clova_ocr", "label": "CLOVA OCR",
-                "status": "error",
-                "message": "clova_ocr.txt에 CLOVA_OCR_URL 또는 CLOVA_OCR_SECRET이 없습니다.",
-            }
+    def _jacket_index():
+        from config.settings import JACKET_CDN_URL
+        LABEL = "자켓 인덱스"
         try:
-            import requests as _req
-            import base64, uuid, numpy as np, cv2
-            blank = np.zeros((10, 10, 3), dtype=np.uint8)
-            _, buf = cv2.imencode('.jpg', blank)
-            img_b64 = base64.b64encode(buf).decode('utf-8')
-            payload = {
-                "version": "V2",
-                "requestId": str(uuid.uuid4()),
-                "timestamp": 0,
-                "images": [{"format": "jpg", "name": "test", "data": img_b64}],
-            }
-            headers = {"X-OCR-SECRET": CLOVA_OCR_SECRET, "Content-Type": "application/json"}
-            resp = _req.post(CLOVA_OCR_URL, json=payload, headers=headers, timeout=10)
-            if resp.status_code == 401:
+            from core import jacket_index
+            from data.song_db import load_song_db
+            _, raw = load_song_db("intl")
+            if not raw:
                 return {
-                    "id": "clova_ocr", "label": "CLOVA OCR",
-                    "status": "error",
-                    "message": "인증 실패(401) — clova_ocr.txt의 Secret Key를 확인하세요.",
-                }
-            if resp.status_code not in (200, 400):
-                return {
-                    "id": "clova_ocr", "label": "CLOVA OCR",
+                    "id": "jacket_index", "label": LABEL,
                     "status": "warning",
-                    "message": f"API 응답 코드 {resp.status_code} — URL이 올바른지 확인하세요.",
+                    "message": "곡 DB를 불러오지 못해 인덱스를 확인할 수 없습니다.",
                 }
+            hashes, _feats = jacket_index._load()
+            need = len(jacket_index._wanted(raw))
+            if len(hashes) >= need:
+                return {
+                    "id": "jacket_index", "label": LABEL,
+                    "status": "ok", "message": f"정상 ({len(hashes)}곡)",
+                }
+            # 부족분이 있으면 CDN 접근 가능 여부까지 확인
+            import urllib.request
+            probe = jacket_index._wanted(raw)[0]
+            req = urllib.request.Request(JACKET_CDN_URL.format(probe),
+                                         headers={"User-Agent": "maimai-clipper/1.0"})
+            urllib.request.urlopen(req, timeout=10).read(1)
+            return {
+                "id": "jacket_index", "label": LABEL,
+                "status": "warning",
+                "message": f"새 곡 {need - len(hashes)}개의 자켓을 받을 수 있습니다.",
+            }
         except Exception as e:
             return {
-                "id": "clova_ocr", "label": "CLOVA OCR",
-                "status": "warning",
-                "message": f"API 연결 실패: {e}",
+                "id": "jacket_index", "label": LABEL,
+                "status": "error",
+                "message": f"자켓 CDN에 접근할 수 없습니다: {e}",
             }
-        return {"id": "clova_ocr", "label": "CLOVA OCR", "status": "ok", "message": "정상"}
 
     def _song_db():
         import datetime
@@ -284,10 +273,10 @@ def check_environment() -> list:
             "status": "warning",
             "message": "Firefox에서 youtube.com에 로그인되어 있는지 확인하세요.",
         },
-        "clova_ocr": {
-            "id": "clova_ocr", "label": "CLOVA OCR",
+        "jacket_index": {
+            "id": "jacket_index", "label": "자켓 인덱스",
             "status": "error",
-            "message": "점검 중 오류가 발생했습니다. clova_ocr.txt를 확인하세요.",
+            "message": "점검 중 오류가 발생했습니다.",
         },
         "song_db": {
             "id": "song_db", "label": "maimai DB",
@@ -303,12 +292,12 @@ def check_environment() -> list:
             "yolo":            ex.submit(_yolo),
             "firefox_youtube": ex.submit(_firefox_youtube),
             "client_secret":   ex.submit(_client_secret),
-            "clova_ocr":       ex.submit(_clova_ocr),
+            "jacket_index":    ex.submit(_jacket_index),
             "song_db":         ex.submit(_song_db),
             "cuda":            ex.submit(_cuda),
         }
 
-        timeouts = {"firefox_youtube": 15, "clova_ocr": 15, "song_db": 20}
+        timeouts = {"firefox_youtube": 15, "jacket_index": 20, "song_db": 20}
         results = []
         for key, f in futures.items():
             try:
