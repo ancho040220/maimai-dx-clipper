@@ -1,5 +1,7 @@
 # 런타임 생성 파일
 cache/
+# dxdata 7일 TTL 캐시 — 없으면 자동 다운로드
+config/song_db_cache.json
 
 # PyInstaller 빌드 아티팩트
 build/
