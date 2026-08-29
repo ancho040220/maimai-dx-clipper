@@ -8,8 +8,12 @@ YOLO로 인게임 화면을 감지·크롭 → 1000×1000 정규화 → Tesserac
 import argparse
 import json
 import multiprocessing
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -21,7 +25,7 @@ import numpy as np
 from config.settings import (
     PROJECT_DIR,
     RATING_MIN, RATING_MAX, MAX_RATING_CHANGE, MIN_GAP,
-    TESSERACT_CMD, TESS_CONFIG,
+    TESSERACT_CMD, TESS_CONFIG, RATING_OCR_BATCH,
     MODEL_PATH, YOLO_CONF,
     BAR_WIDTH, LOOKBACK_STEP, TMPL_MATCH_THRESH,
     GAME_ROI,
@@ -118,6 +122,74 @@ def _preprocess(roi: np.ndarray) -> np.ndarray:
     gray  = cv2.cvtColor(large, cv2.COLOR_BGR2GRAY)
     _, binary = cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY_INV)
     return cv2.copyMakeBorder(binary, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+
+
+def _parse_rating(text: str) -> Optional[int]:
+    clean = text.replace(" ", "").replace(",", "").replace("\n", "").strip()
+    if clean.isdigit():
+        val = int(clean)
+        if RATING_MIN <= val <= RATING_MAX:
+            return val
+    return None
+
+
+def _rating_roi(crop_1000: np.ndarray) -> Optional[np.ndarray]:
+    """OCR에 넣을 GAME_ROI 전처리 이미지. 크롭이 비면 None."""
+    x1, y1, x2, y2 = GAME_ROI
+    roi = crop_1000[y1:y2, x1:x2]
+    return None if roi.size == 0 else _preprocess(roi)
+
+
+def _batch_ocr_ratings(tess, images: list) -> list:
+    """전처리된 이미지 여러 장을 tesseract 한 번의 호출로 읽는다.
+
+    pytesseract는 호출마다 프로세스를 새로 띄우는데(빈 이미지에도 77ms) 실제
+    인식 작업은 18ms뿐이다. tesseract CLI에 이미지 목록 파일을 넘기면 프로세스
+    생성은 배치당 1회로 줄면서 각 이미지는 여전히 --psm 7로 개별 인식되므로
+    판독값은 낱개 호출과 동일하다.
+
+    실패 시 낱개 호출로 폴백한다 — 속도보다 검출 누락이 없는 쪽이 중요하다.
+    """
+    out: list = [None] * len(images)
+    idx = [i for i, im in enumerate(images) if im is not None]
+    if not idx:
+        return out
+
+    tmpdir = tempfile.mkdtemp(prefix="mai_ocr_")
+    try:
+        paths = []
+        for i in idx:
+            p = os.path.join(tmpdir, f"{i:05d}.png")
+            cv2.imwrite(p, images[i])
+            paths.append(p)
+        list_path = os.path.join(tmpdir, "list.txt")
+        with open(list_path, "w", encoding="utf-8") as fp:
+            fp.write("\n".join(paths))
+        out_base = os.path.join(tmpdir, "out")
+
+        kwargs = {"capture_output": True, "check": False}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = 0x08000000       # CREATE_NO_WINDOW
+        subprocess.run([TESSERACT_CMD, list_path, out_base] + TESS_CONFIG.split(), **kwargs)
+
+        txt   = Path(out_base + ".txt").read_text(encoding="utf-8", errors="ignore")
+        pages = txt.split("\f")
+        if len(pages) < len(idx):
+            raise RuntimeError(f"페이지 수 불일치 ({len(pages)} < {len(idx)})")
+        for i, page in zip(idx, pages):
+            out[i] = _parse_rating(page)
+        return out
+    except Exception as e:
+        print(f"  ⚠️  배치 OCR 실패 — 낱개 호출로 대체합니다: {e}")
+        for i in idx:
+            try:
+                out[i] = _parse_rating(
+                    tess.image_to_string(images[i], config=TESS_CONFIG))
+            except Exception:
+                out[i] = None
+        return out
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _ocr_rating(tess, crop_1000: np.ndarray) -> Optional[int]:
@@ -384,6 +456,7 @@ def _worker(args: dict) -> dict:
     seg_duration    = _end - actual_start
     last_report_pct = -1.0
     readings: list                              = []
+    batch: list                                 = []   # [(ts, 전처리 이미지 or None)]
     pending_rating: Optional[Tuple[float, int]] = None
     last_result_time                            = actual_start - MIN_GAP - 1
     last_confirmed                              = initial_rating
@@ -399,6 +472,35 @@ def _worker(args: dict) -> dict:
                 "done":    done,
                 "elapsed": time.time() - _worker_start,
             })
+
+    def _flush_batch():
+        """모아둔 프레임을 한 번에 OCR하고 결과를 순서대로 상태 머신에 넣는다.
+
+        MIN_GAP 쿨다운 판정은 여기서 한다 — 수집 시점에는 last_result_time이
+        아직 정해지지 않았기 때문이다. 쿨다운에 걸린 프레임은 읽어둔 값을
+        버리므로, 낱개로 처리하던 기존 동작과 상태 머신 입력이 같다.
+        """
+        nonlocal pending_rating, last_result_time, last_confirmed
+        if not batch:
+            return
+        values = _batch_ocr_ratings(tess, [img for _, img in batch])
+        for (ts, _), current_rating in zip(batch, values):
+            if ts - last_result_time < MIN_GAP:
+                pending_rating = None
+                continue
+            if pending_rating is not None:
+                prev_ts, prev_val = pending_rating
+                pending_rating    = None
+                confirmed         = current_rating if current_rating is not None else prev_val
+                readings.append((prev_ts, confirmed))
+                last_result_time  = prev_ts
+                last_confirmed    = confirmed
+            elif current_rating is not None:
+                if (last_confirmed is None
+                        or (last_confirmed <= current_rating
+                            and current_rating - last_confirmed < MAX_RATING_CHANGE)):
+                    pending_rating = (ts, current_rating)
+        batch.clear()
 
     _report_progress(0.0)
 
@@ -442,28 +544,15 @@ def _worker(args: dict) -> dict:
                     _report_progress(pct)
                     last_report_pct = pct
 
-                if current_sec - last_result_time < MIN_GAP:
-                    pending_rating = None
-                else:
-                    crop           = _detect_game_crop(yolo_model, frame)
-                    current_rating = _ocr_rating(tess, crop) if crop is not None else None
-
-                    if pending_rating is not None:
-                        prev_ts, prev_val = pending_rating
-                        pending_rating    = None
-                        confirmed         = current_rating if current_rating is not None else prev_val
-                        readings.append((prev_ts, confirmed))
-                        last_result_time  = prev_ts
-                        last_confirmed    = confirmed
-                    elif current_rating is not None:
-                        if (last_confirmed is None
-                                or (last_confirmed <= current_rating
-                                    and current_rating - last_confirmed < MAX_RATING_CHANGE)):
-                            pending_rating = (current_sec, current_rating)
+                crop = _detect_game_crop(yolo_model, frame)
+                batch.append((current_sec, _rating_roi(crop) if crop is not None else None))
+                if len(batch) >= RATING_OCR_BATCH:
+                    _flush_batch()
 
         frame_num += 1
 
     cap.release()
+    _flush_batch()
 
     if pending_rating is not None:
         readings.append(pending_rating)

@@ -39,6 +39,9 @@ MIN_GAP           = 20.0    # 레이팅 감지 최소 간격 (초)
 _tess_default = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 TESSERACT_CMD = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract") or _tess_default
 TESS_CONFIG   = "--psm 7 --oem 3 -c tessedit_char_whitelist=0123456789"
+# 레이팅 OCR 배치 크기 — tesseract 프로세스 1회로 처리할 프레임 수.
+# 프로세스 생성 비용(장당 77ms)을 배치로 분산한다. 30 이후로는 수익이 급감한다.
+RATING_OCR_BATCH = 30
 
 # ── 곡명 식별 (자켓 매칭 + PaddleOCR) ─────────────────────────────────────────
 JACKET_CDN_URL         = "https://shama.dxrating.net/images/cover/v2/{}.jpg"
