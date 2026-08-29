@@ -20,27 +20,30 @@
 
 > ⚠️ **현재 Windows 전용**입니다. macOS · Linux는 지원하지 않습니다.
 
-> GPU(CUDA)가 없으면 CPU로 동작하지만 스캔 속도가 크게 느려집니다.  
-> NVIDIA GPU가 있다면 `setup/setup.bat` 실행 시 CUDA 버전이 자동으로 설치됩니다.
+> GPU(CUDA)가 없으면 CPU로 동작하지만 스캔 속도가 느려집니다.  
+> `setup.bat`이 GPU 유무를 확인해 알맞은 버전을 설치합니다 — NVIDIA GPU가 있으면
+> CUDA 버전(약 4GB), 없으면 CPU 버전(약 300MB)입니다.
 
 ---
 
 ## 최초 설치 (처음 한 번만)
 
-### 1. Python 설치
+`setup` 폴더 안의 **`setup.bat`** 파일을 더블클릭하면 됩니다.
+검은 창이 열리면서 필요한 것을 순서대로 설치합니다.
 
-1. https://www.python.org/downloads 접속
-2. 노란색 **Download Python 3.x.x** 버튼 클릭
-3. 다운로드된 파일 실행
-4. ⚠️ **반드시** 설치 화면 맨 아래 **"Add python.exe to PATH"** 체크박스 체크
-5. **Install Now** 클릭
-6. 설치 완료 후 **Close**
+1. **Python** — 없으면 자동으로 설치합니다.
+   설치되면 *"Close this window and run setup.bat again"* 메시지가 나오는데,
+   창을 닫고 `setup.bat`을 **한 번 더 실행**하세요. (PATH 반영에 필요합니다)
+2. **GPU 확인** — NVIDIA GPU 유무에 따라 CUDA / CPU 버전을 고릅니다
+3. **Python 패키지** — 용량이 커서 시간이 걸립니다
+4. **ffmpeg**
+5. **Tesseract OCR**
 
-### 2. 패키지 설치
+*"Installation complete!"* 메시지가 나오면 아무 키나 눌러 닫으세요.
 
-1. `setup` 폴더 안의 `setup.bat` 파일 더블클릭
-2. 검은 창이 열리면서 자동으로 설치됨
-3. **"설치 완료!"** 메시지가 나오면 아무 키 눌러서 닫기
+> Python이 없고 winget도 없는 환경이면 https://www.python.org/downloads 에서
+> 직접 설치하세요. 설치 화면 맨 아래 **"Add python.exe to PATH"** 체크박스를
+> 반드시 체크해야 합니다.
 
 ---
 

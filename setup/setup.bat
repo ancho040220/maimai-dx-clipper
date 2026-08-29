@@ -1,20 +1,57 @@
 @echo off
+setlocal
 echo ============================================================
 echo   maimai DX Rating Clipper - Install
 echo ============================================================
 echo.
 
-echo [1/3] Installing Python packages...
-python -m pip install -r "%~dp0requirements.txt"
+echo [1/5] Checking Python...
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo   Python not found. Installing via winget...
+    where winget >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo [ERROR] winget is not available.
+        echo         Install Python 3.11 manually from https://www.python.org/downloads
+        echo         and check "Add python.exe to PATH" during setup.
+        pause
+        exit /b 1
+    )
+    winget install Python.Python.3.11 --accept-source-agreements --accept-package-agreements
+    echo.
+    echo [OK] Python installed.
+    echo      Close this window and run setup.bat again so PATH takes effect.
+    pause
+    exit /b 0
+)
+for /f "tokens=*" %%v in ('python --version') do echo   Found %%v
+
+echo.
+echo [2/5] Checking GPU...
+set REQ=requirements-cpu.txt
+nvidia-smi >nul 2>&1
+if not errorlevel 1 set REQ=requirements-gpu.txt
+if "%REQ%"=="requirements-gpu.txt" (
+    echo   NVIDIA GPU detected - installing CUDA build ^(about 4 GB^)
+) else (
+    echo   No NVIDIA GPU - installing CPU build ^(about 300 MB^)
+    echo   Scanning will be slower but everything works the same.
+)
+
+echo.
+echo [3/5] Installing Python packages...
+python -m pip install -r "%~dp0%REQ%"
 if errorlevel 1 (
     echo.
-    echo [ERROR] Installation failed. Make sure Python 3.10+ is installed.
+    echo [ERROR] Package installation failed.
+    echo         Check your internet connection and run setup.bat again.
     pause
     exit /b 1
 )
 
 echo.
-echo [2/3] Installing ffmpeg...
+echo [4/5] Installing ffmpeg...
 winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.
@@ -22,7 +59,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Installing Tesseract OCR...
+echo [5/5] Installing Tesseract OCR...
 winget install UB-Mannheim.TesseractOCR --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.
@@ -32,10 +69,10 @@ if errorlevel 1 (
 echo.
 echo [OK] Installation complete!
 echo.
-echo Place this file in config\credentials\:
-echo   - client_secret.json  (YouTube API credentials, for auto-upload)
-echo.
 echo For YouTube downloads, log in to YouTube in Firefox.
 echo yt-dlp reads cookies directly from Firefox - no manual export needed.
+echo.
+echo Auto-upload is optional. If you want it, put client_secret.json in
+echo config\credentials\ - see the README for how to create it.
 echo.
 pause

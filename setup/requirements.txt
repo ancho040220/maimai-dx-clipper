@@ -1,11 +1,12 @@
---extra-index-url https://download.pytorch.org/whl/cu128
-torch>=2.6.0
-torchvision>=0.21.0
-torchaudio>=2.6.0
+# Common dependencies. torch is installed separately by
+# requirements-gpu.txt or requirements-cpu.txt depending on GPU availability.
+#
+# NOTE: keep this file ASCII-only. pip reads requirements files using the
+# system locale (cp949 on Korean Windows), so non-ASCII comments break install.
 pytesseract>=0.3.10
-# numpy<2 pinned: paddleocr의 imgaug가 np.sctypes를 사용 (numpy 2.0에서 제거됨)
+# numpy<2 pinned: paddleocr's imgaug uses np.sctypes (removed in numpy 2.0)
 numpy==1.26.4
-# opencv-contrib-python 4.10 이하: numpy 1.26 호환 마지막 버전
+# opencv-contrib-python 4.10 or lower: last version compatible with numpy 1.26
 opencv-contrib-python==4.10.0.84
 Pillow>=10.0.0
 yt-dlp>=2024.1.0
