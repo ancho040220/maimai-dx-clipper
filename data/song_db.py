@@ -88,7 +88,8 @@ def load_song_db(region: str = "intl") -> tuple[list[str], list[dict]]:
         )
 
     filtered = [s for s in raw if _in_region(s)] if region else raw
-    titles = sorted({s["title"] for s in filtered})
+    # 宴会場(우타게) 보면은 레이팅에 반영되지 않아 클리핑 대상이 아니므로 후보에서 제외
+    titles = sorted({s["title"] for s in filtered if s.get("category") != "宴会場"})
     _MEM_CACHE = (titles, raw)
     return _MEM_CACHE
 
