@@ -474,6 +474,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
                       autoUpload, setAutoUpload, songOcr, setSongOcr }) {
   const [url, setUrl]               = useState("");
   const [startRating, setStartRating] = useState("");
+  const [liveConfirm, setLiveConfirm] = useState(null);   // 라이브 시작 전 레이팅 확인
   const [ratingError, setRatingError] = useState("");
   const [tStart, setTStart]         = useState("");
   const [tEnd, setTEnd]             = useState("");
@@ -571,12 +572,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
 
     if (hasError) return;
 
-    setLog([]);
-    setDetections([]);
-    setHighlights([]);
-    setPhaseInfo(null);
-    setScanStatus("running");
-    bridge.start_pipeline(JSON.stringify({
+    const payload = {
       url,
       startRating: rating,
       tStart, tEnd, autoUpload,
@@ -584,7 +580,22 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
       isLive: vodInfo.is_live,
       buffer: 6,
       songOcr,
-    }));
+    };
+
+    // 라이브는 시작 레이팅이 실제 값과 다르면 아무것도 감지되지 않은 채 끝난다.
+    // 되돌릴 방법이 없으므로 시작 전에 한 번 확인받는다.
+    if (vodInfo.is_live) { setLiveConfirm(payload); return; }
+    launchPipeline(payload);
+  }
+
+  function launchPipeline(payload) {
+    setLiveConfirm(null);
+    setLog([]);
+    setDetections([]);
+    setHighlights([]);
+    setPhaseInfo(null);
+    setScanStatus("running");
+    bridge.start_pipeline(JSON.stringify(payload));
   }
 
   function handleStop() {
@@ -618,6 +629,34 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
 
   return (
     <div className="col" style={{ padding: "24px 28px" }}>
+      {/* 라이브 시작 전 레이팅 확인 */}
+      {liveConfirm && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.55)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div className="card col" style={{ padding: "24px 28px", gap: 14, width: 420 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>라이브 모드 시작</div>
+            <div className="col" style={{ gap: 4, alignItems: "center", padding: "10px 0" }}>
+              <span className="muted" style={{ fontSize: 11.5 }}>시작 레이팅</span>
+              <span style={{ fontSize: 32, fontWeight: 700, letterSpacing: "0.02em" }}>
+                {liveConfirm.startRating}
+              </span>
+            </div>
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.8 }}>
+              지금 게임에 표시된 레이팅과 같은지 확인하세요.<br />
+              값이 다르면 플레이가 <strong>하나도 감지되지 않은 채</strong> 끝납니다.
+            </div>
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+              <button className="btn ghost" onClick={() => setLiveConfirm(null)}>취소</button>
+              <button className="btn primary" onClick={() => launchPipeline(liveConfirm)}>
+                확인하고 시작
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Error banner */}
       {errorBanner && (
         <div style={{
