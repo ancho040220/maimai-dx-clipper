@@ -32,9 +32,8 @@ if errorlevel 1 (
 echo.
 echo [OK] Installation complete!
 echo.
-echo Place these files in config\credentials\:
+echo Place this file in config\credentials\:
 echo   - client_secret.json  (YouTube API credentials, for auto-upload)
-echo   - clova_ocr.txt       (CLOVA OCR URL + Secret Key, for song title OCR)
 echo.
 echo For YouTube downloads, log in to YouTube in Firefox.
 echo yt-dlp reads cookies directly from Firefox - no manual export needed.
