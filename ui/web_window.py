@@ -1,11 +1,19 @@
 """QWebEngineView 기반 메인 윈도우."""
 from pathlib import Path
 
-# Qt D3D11/DXGI DLL보다 OpenCV DLL을 먼저 초기화해야 WinError 1114가 발생하지 않음
+# Qt D3D11/DXGI DLL보다 OpenCV·onnxruntime DLL을 먼저 초기화해야 한다.
+# QtWebEngine을 먼저 올리면 onnxruntime-directml 이 D3D12 DLL 초기화에 실패해
+# import 자체가 죽고(환경 점검이 GPU를 못 찾는다), OpenCV는 WinError 1114가 난다.
 # (QApplication 생성 전 단계에서 import해야 효과 있음)
 try:
     import cv2
     del cv2
+except Exception:
+    pass
+
+try:
+    import onnxruntime
+    onnxruntime.get_available_providers()   # DLL 초기화를 여기서 끝낸다
 except Exception:
     pass
 
