@@ -95,7 +95,12 @@ def _init_yolo(device: str = "cuda"):
         sys.exit(1)
     so = ort.SessionOptions()
     so.log_severity_level = 3          # 경고 이하 로그 억제
-    return ort.InferenceSession(MODEL_PATH, so, providers=onnx_providers())
+    try:
+        return ort.InferenceSession(MODEL_PATH, so, providers=onnx_providers())
+    except Exception as e:
+        # GPU provider가 목록에는 있으나 실제 초기화에 실패하는 환경이 있다
+        print(f"  ⚠️  GPU 추론 초기화 실패 — CPU로 대체합니다: {e}")
+        return ort.InferenceSession(MODEL_PATH, so, providers=["CPUExecutionProvider"])
 
 
 def _letterbox(im: np.ndarray, size: int = 640):

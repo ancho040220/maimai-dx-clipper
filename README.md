@@ -20,13 +20,9 @@
 
 > ⚠️ **현재 Windows 전용**입니다. macOS · Linux는 지원하지 않습니다.
 
-> 기본은 CPU로 동작합니다. GPU가 있으면 아래 두 줄로 가속할 수 있습니다.
-> ```
-> pip uninstall onnxruntime
-> pip install onnxruntime-directml
-> ```
-> DirectML은 NVIDIA·AMD·Intel 어느 GPU에서도 동작하고 CUDA 설치가 필요 없습니다.
-> 프로그램이 사용 가능한 가장 빠른 실행 장치를 자동으로 고릅니다.
+> GPU가 있으면 자동으로 사용합니다. NVIDIA·AMD·Intel 어느 쪽이든 되고
+> CUDA 설치가 필요 없으며, GPU가 없으면 CPU로 동작합니다.
+> (기준 PC 실측: GPU 5.3ms/프레임 vs CPU 27.6ms)
 
 ---
 

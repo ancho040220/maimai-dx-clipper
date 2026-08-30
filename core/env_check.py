@@ -135,8 +135,8 @@ def check_environment() -> list:
             return {
                 "id": _id, "label": _label,
                 "status": "warning",
-                "message": "GPU는 있지만 가속 패키지가 없어 CPU로 실행됩니다. 속도를 높이려면 "
-                           "pip uninstall onnxruntime 후 pip install onnxruntime-directml 을 실행하세요.",
+                "message": "GPU는 있지만 가속 패키지가 없어 CPU로 실행됩니다. "
+                           "setup/setup.bat 을 다시 실행하면 속도가 5배 빨라집니다.",
             }
         return {
             "id": _id, "label": _label,
