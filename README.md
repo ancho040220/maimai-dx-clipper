@@ -200,3 +200,44 @@ API 키나 별도 설정이 필요 없고, 첫 분석 시 자켓을 자동으로
 | YouTube 업로드 실패 / 인증 오류 | 환경 점검 패널의 **🔑 재인증** 버튼 클릭, 또는 `config/credentials/youtube_token.json` 삭제 후 재실행 |
 | CUDA / torch 오류 | `setup/setup.bat` 다시 실행 |
 | Python을 찾을 수 없음 | Python 재설치 (PATH 체크 확인) |
+
+---
+
+## 라이선스
+
+이 프로그램은 **GNU Affero General Public License v3.0** 으로 배포됩니다.
+전문은 저장소 루트의 [LICENSE](LICENSE) 파일에 있습니다.
+
+```
+Copyright (C) 2026 ancho040220
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+```
+
+AGPL을 택한 이유는 아래 두 의존성이 강한 카피레프트이기 때문입니다.
+이 프로그램을 배포하거나 네트워크 서비스로 제공하려면 소스도 함께 공개해야 합니다.
+
+| 구성 요소 | 용도 | 라이선스 |
+|-----------|------|----------|
+| [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) | 게임 화면 영역 감지 | **AGPL-3.0** |
+| [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | 데스크톱 UI | **GPL-3.0** |
+| [PyTorch](https://pytorch.org) | YOLO 추론 | BSD-3-Clause |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | 달성률·난이도·곡명 인식 | Apache-2.0 |
+| [OpenCV](https://opencv.org) | 영상 처리 | Apache-2.0 |
+| [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) | 레이팅 숫자 인식 | Apache-2.0 |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | 영상 다운로드 | Unlicense |
+| [ffmpeg](https://ffmpeg.org) | 클립 커팅·인코딩 | LGPL/GPL |
+
+곡 정보는 [gekichumai/dxrating](https://github.com/gekichumai/dxrating) 의 dxdata를,
+자켓 이미지는 같은 프로젝트의 CDN을 사용합니다.
+
+> 이 프로그램은 SEGA 및 maimai와 무관한 비공식 도구입니다.
+> 게임 영상·음원·자켓의 권리는 각 권리자에게 있으며, 다운로드한 영상을
+> 재업로드할 때는 원 저작자와 플랫폼 약관을 확인하세요.
