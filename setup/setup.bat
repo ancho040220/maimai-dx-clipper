@@ -5,7 +5,7 @@ echo   maimai DX Rating Clipper - Install
 echo ============================================================
 echo.
 
-echo [1/5] Checking Python...
+echo [1/4] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 (
     echo   Python not found. Installing via winget...
@@ -28,20 +28,8 @@ if errorlevel 1 (
 for /f "tokens=*" %%v in ('python --version') do echo   Found %%v
 
 echo.
-echo [2/5] Checking GPU...
-set REQ=requirements-cpu.txt
-nvidia-smi >nul 2>&1
-if not errorlevel 1 set REQ=requirements-gpu.txt
-if "%REQ%"=="requirements-gpu.txt" (
-    echo   NVIDIA GPU detected - installing CUDA build ^(about 4 GB^)
-) else (
-    echo   No NVIDIA GPU - installing CPU build ^(about 300 MB^)
-    echo   Scanning will be slower but everything works the same.
-)
-
-echo.
-echo [3/5] Installing Python packages...
-python -m pip install -r "%~dp0%REQ%"
+echo [2/4] Installing Python packages...
+python -m pip install -r "%~dp0requirements.txt"
 if errorlevel 1 (
     echo.
     echo [ERROR] Package installation failed.
@@ -51,7 +39,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/5] Installing ffmpeg...
+echo [3/4] Installing ffmpeg...
 winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.
@@ -59,7 +47,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/5] Installing Tesseract OCR...
+echo [4/4] Installing Tesseract OCR...
 winget install UB-Mannheim.TesseractOCR --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.

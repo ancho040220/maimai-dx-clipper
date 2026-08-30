@@ -53,7 +53,7 @@ const ENV_CHECK_INITIAL = [
   { id: "client_secret",   label: "Google 인증 파일",   status: "loading", desc: "YouTube 자동 업로드 인증에만 사용" },
   { id: "jacket_index",    label: "자켓 인덱스",         status: "loading", desc: "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)" },
   { id: "song_db",         label: "maimai DB",          status: "loading", desc: "곡명·레벨 정보 (gekichumai/dxrating, 7일 캐시)" },
-  { id: "cuda",            label: "GPU(CUDA)",          status: "loading", desc: "AI 분석 속도 향상 (없으면 CPU로 동작)" },
+  { id: "cuda",            label: "GPU 가속",          status: "loading", desc: "AI 분석 속도 향상 (없으면 CPU로 동작)" },
 ];
 
 // "required" | "optional" | "conditional" | "conditional_ocr"
@@ -1619,7 +1619,7 @@ const ManualSystem = () => (
       </tbody>
     </table>
     <ManualNote kind="warn"><strong>현재 Windows 전용</strong>입니다. macOS · Linux는 지원하지 않습니다.</ManualNote>
-    <ManualNote kind="info">GPU(CUDA)가 없으면 CPU로 동작하지만 스캔 속도가 크게 느려집니다. NVIDIA GPU가 있다면 <ManualCode>setup/setup.bat</ManualCode> 실행 시 CUDA 버전이 자동으로 설치됩니다.</ManualNote>
+    <ManualNote kind="info">GPU 가속가 없으면 CPU로 동작하지만 스캔 속도가 크게 느려집니다. NVIDIA GPU가 있다면 <ManualCode>setup/setup.bat</ManualCode> 실행 시 CUDA 버전이 자동으로 설치됩니다.</ManualNote>
   </ManualSection>
 );
 
@@ -1820,7 +1820,7 @@ const ManualErrors1 = () => (
         <tr><td style={{ fontWeight: 600 }}>Google 인증 파일</td><td><span className="chip warning">조건부</span></td><td>자동 업로드 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>자켓 인덱스</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>maimai DB</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
-        <tr><td style={{ fontWeight: 600 }}>GPU(CUDA)</td><td><span className="chip">선택</span></td><td>없어도 시작 가능 (CPU 동작)</td></tr>
+        <tr><td style={{ fontWeight: 600 }}>GPU 가속</td><td><span className="chip">선택</span></td><td>없어도 시작 가능 (CPU 동작)</td></tr>
       </tbody>
     </table>
   </ManualSection>

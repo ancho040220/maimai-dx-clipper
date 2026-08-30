@@ -15,14 +15,18 @@
 | OS | Windows 10 64-bit | Windows 11 64-bit |
 | Python | 3.10 이상 | 3.11 이상 |
 | RAM | 4GB | 8GB 이상 |
-| GPU | — (CPU로도 동작) | NVIDIA CUDA 지원 GPU |
+| GPU | — (CPU로도 동작) | DirectX 12 지원 GPU |
 | 브라우저 | Firefox | Firefox |
 
 > ⚠️ **현재 Windows 전용**입니다. macOS · Linux는 지원하지 않습니다.
 
-> GPU(CUDA)가 없으면 CPU로 동작하지만 스캔 속도가 느려집니다.  
-> `setup.bat`이 GPU 유무를 확인해 알맞은 버전을 설치합니다 — NVIDIA GPU가 있으면
-> CUDA 버전(약 4GB), 없으면 CPU 버전(약 300MB)입니다.
+> 기본은 CPU로 동작합니다. GPU가 있으면 아래 두 줄로 가속할 수 있습니다.
+> ```
+> pip uninstall onnxruntime
+> pip install onnxruntime-directml
+> ```
+> DirectML은 NVIDIA·AMD·Intel 어느 GPU에서도 동작하고 CUDA 설치가 필요 없습니다.
+> 프로그램이 사용 가능한 가장 빠른 실행 장치를 자동으로 고릅니다.
 
 ---
 
@@ -34,10 +38,9 @@
 1. **Python** — 없으면 자동으로 설치합니다.
    설치되면 *"Close this window and run setup.bat again"* 메시지가 나오는데,
    창을 닫고 `setup.bat`을 **한 번 더 실행**하세요. (PATH 반영에 필요합니다)
-2. **GPU 확인** — NVIDIA GPU 유무에 따라 CUDA / CPU 버전을 고릅니다
-3. **Python 패키지** — 용량이 커서 시간이 걸립니다
-4. **ffmpeg**
-5. **Tesseract OCR**
+2. **Python 패키지**
+3. **ffmpeg**
+4. **Tesseract OCR**
 
 *"Installation complete!"* 메시지가 나오면 아무 키나 눌러 닫으세요.
 
@@ -182,7 +185,7 @@ API 키나 별도 설정이 필요 없고, 첫 분석 시 자켓을 자동으로
 | Google 인증 파일 | 조건부 | **자동 업로드 ON** 일 때만 필수 |
 | 자켓 인덱스 | 조건부 | **곡 정보 추출 ON** 일 때만 필수 (첫 실행 시 자켓 다운로드에 인터넷 필요) |
 | maimai DB | 조건부 | **곡 정보 추출 ON** 일 때만 필수 (없으면 퍼지 매칭 불가) |
-| GPU(CUDA) | 선택 | 없어도 시작 가능 (CPU로 동작, 속도 저하) |
+| GPU 가속 | 선택 | 없어도 시작 가능 (CPU로 동작, 속도 저하) |
 
 시작 불가 시 버튼 아래에 원인 항목이 표시됩니다.  
 대부분은 `setup/setup.bat`을 다시 실행하거나 아래 표를 참고하면 해결됩니다.
@@ -191,14 +194,14 @@ API 키나 별도 설정이 필요 없고, 첫 분석 시 자켓을 자동으로
 |-------------------|--------|
 | 환경 점검 — ffmpeg 오류 | `setup/setup.bat` 다시 실행 |
 | 환경 점검 — Tesseract OCR 오류 | `setup/setup.bat` 다시 실행 |
-| 환경 점검 — YOLO 모델 오류 | `best_nano.pt` 파일이 프로젝트 폴더 루트에 있는지 확인 |
+| 환경 점검 — YOLO 모델 오류 | `best_nano.onnx` 파일이 프로젝트 폴더 루트에 있는지 확인 |
 | 환경 점검 — YouTube 로그인 경고 | Firefox에서 youtube.com에 로그인했는지 확인 |
 | 환경 점검 — Google 인증 파일 경고 | `config/credentials/client_secret.json` 준비 여부 확인 (자동 업로드 ON인 경우) |
 | 환경 점검 — 자켓 인덱스 오류 | 인터넷 연결 확인 (자켓 다운로드에 필요). **⬇️ 업데이트** 버튼으로 다시 시도할 수 있습니다 |
 | Sign in to confirm you're not a bot | Firefox에서 YouTube에 로그인했는지 확인하세요. |
 | 곡 정보가 표시되지 않음 | **곡 정보 추출** 토글이 ON인지 확인 |
 | YouTube 업로드 실패 / 인증 오류 | 환경 점검 패널의 **🔑 재인증** 버튼 클릭, 또는 `config/credentials/youtube_token.json` 삭제 후 재실행 |
-| CUDA / torch 오류 | `setup/setup.bat` 다시 실행 |
+
 | Python을 찾을 수 없음 | Python 재설치 (PATH 체크 확인) |
 
 ---
@@ -226,9 +229,9 @@ AGPL을 택한 이유는 아래 두 의존성이 강한 카피레프트이기 �
 
 | 구성 요소 | 용도 | 라이선스 |
 |-----------|------|----------|
-| [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) | 게임 화면 영역 감지 | **AGPL-3.0** |
+| [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) | 화면 감지 모델 학습 (배포물에는 미포함) | **AGPL-3.0** |
 | [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) | 데스크톱 UI | **GPL-3.0** |
-| [PyTorch](https://pytorch.org) | YOLO 추론 | BSD-3-Clause |
+| [ONNX Runtime](https://onnxruntime.ai) | 화면 감지 모델 추론 | MIT |
 | [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | 달성률·난이도·곡명 인식 | Apache-2.0 |
 | [OpenCV](https://opencv.org) | 영상 처리 | Apache-2.0 |
 | [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) | 레이팅 숫자 인식 | Apache-2.0 |

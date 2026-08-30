@@ -22,6 +22,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from core.gpu import has_nvidia, onnx_providers, vram_gb
 from config.settings import (
     PROJECT_DIR,
     RATING_MIN, RATING_MAX, MAX_RATING_CHANGE, MIN_GAP,
@@ -79,30 +80,66 @@ def _enable_ansi() -> None:
 # ── YOLO ───────────────────────────────────────────────────────────────────────
 
 def _init_yolo(device: str = "cuda"):
+    """게임 화면 감지 모델(ONNX) 로드.
+
+    device 인자는 호출부 호환용이다. 실제 실행 장치는 설치된 onnxruntime이
+    제공하는 provider로 결정된다 — core/gpu.py 참고.
+    """
     try:
-        from ultralytics import YOLO
+        import onnxruntime as ort
     except ImportError:
-        print("❌  ultralytics 가 설치되어 있지 않습니다: pip install ultralytics")
+        print("❌  onnxruntime 이 설치되어 있지 않습니다: setup/setup.bat 을 다시 실행하세요.")
         sys.exit(1)
-    import torch
-    if device == "cuda" and not torch.cuda.is_available():
-        print("⚠️  CUDA 사용 불가 — CPU 로 대체합니다.")
-        device = "cpu"
-    model = YOLO(MODEL_PATH)
-    model.to(device)
-    return model
+    if not Path(MODEL_PATH).exists():
+        print(f"❌  모델 파일을 찾을 수 없습니다: {MODEL_PATH}")
+        sys.exit(1)
+    so = ort.SessionOptions()
+    so.log_severity_level = 3          # 경고 이하 로그 억제
+    return ort.InferenceSession(MODEL_PATH, so, providers=onnx_providers())
 
 
-def _detect_game_crop(yolo_model, frame: np.ndarray) -> Optional[np.ndarray]:
-    """YOLO로 인게임 화면 감지 → 1000×1000 크롭 반환. 미감지 시 None."""
-    results = yolo_model(frame, verbose=False, conf=YOLO_CONF)
-    boxes   = results[0].boxes
-    if boxes is None or len(boxes) == 0:
+def _letterbox(im: np.ndarray, size: int = 640):
+    """모델 입력 크기에 맞춰 비율 유지 축소 + 회색 패딩.
+
+    ultralytics 의 LetterBox 와 동일한 패딩 계산을 쓴다 — 박스 좌표가 어긋나면
+    GAME_ROI 안의 내용이 밀려 OCR 판독이 달라진다.
+    """
+    h, w = im.shape[:2]
+    r = min(size / h, size / w)
+    nw, nh = round(w * r), round(h * r)
+    dw, dh = (size - nw) / 2, (size - nh) / 2
+    if (w, h) != (nw, nh):
+        im = cv2.resize(im, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    top, bottom = round(dh - 0.1), round(dh + 0.1)
+    left, right = round(dw - 0.1), round(dw + 0.1)
+    im = cv2.copyMakeBorder(im, top, bottom, left, right,
+                            cv2.BORDER_CONSTANT, value=(114, 114, 114))
+    return im, r, left, top
+
+
+def _detect_game_crop(session, frame: np.ndarray) -> Optional[np.ndarray]:
+    """게임 화면을 감지해 1000×1000 크롭 반환. 미감지 시 None."""
+    img, ratio, dx, dy = _letterbox(frame)
+    blob = np.ascontiguousarray(
+        img[:, :, ::-1].transpose(2, 0, 1)[None], dtype=np.float32) / 255.0
+    try:
+        out = session.run(None, {session.get_inputs()[0].name: blob})[0]
+    except Exception as e:
+        print(f"  ⚠️  화면 감지 실패: {e}")
         return None
-    best = int(boxes.conf.argmax())
-    x1, y1, x2, y2 = boxes.xyxy[best].cpu().numpy().astype(int)
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+    pred   = out[0].T                       # (후보, 4+클래스)
+    scores = pred[:, 4:].max(axis=1)
+    keep   = scores >= YOLO_CONF
+    if not keep.any():
+        return None
+    pred, scores = pred[keep], scores[keep]
+
+    cx, cy, bw, bh = pred[int(scores.argmax()), :4]
+    x1 = int(max(0, (cx - bw / 2 - dx) / ratio))
+    y1 = int(max(0, (cy - bh / 2 - dy) / ratio))
+    x2 = int(min(frame.shape[1], (cx + bw / 2 - dx) / ratio))
+    y2 = int(min(frame.shape[0], (cy + bh / 2 - dy) / ratio))
     crop = frame[y1:y2, x1:x2]
     if crop.size == 0:
         return None
@@ -624,16 +661,9 @@ def merge_and_detect(
 
 def _auto_workers() -> int:
     """CPU · RAM · VRAM 기반으로 적정 워커 수를 자동 결정."""
-    import psutil, sys
+    import psutil
 
-    torch = sys.modules.get("torch")
-    if torch is None:
-        try:
-            import torch
-        except Exception:
-            torch = None
-
-    cuda = torch is not None and torch.cuda.is_available()
+    cuda  = has_nvidia()
     cores = multiprocessing.cpu_count()
 
     # RAM: 가용 메모리에서 4GB 여유 확보, 워커 1개당 약 2GB 소비
@@ -645,14 +675,11 @@ def _auto_workers() -> int:
         # CUDA: YOLO는 GPU 처리 → CPU는 디코딩 + Tesseract만
         by_cpu  = max(1, cores - 1)
         by_vram = by_cpu
-        vram_gb = 0.0
-        try:
-            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-            by_vram = max(1, int(vram_gb - 2))
-        except Exception:
-            pass
+        total_vram = vram_gb()
+        if total_vram > 0:
+            by_vram = max(1, int(total_vram - 2))
         # VRAM 기반 상한: 소비자급(8GB 미만)=4, 중급(8~16GB)=6, 고급(16GB+)=8
-        vram_cap = 4 if vram_gb < 8 else 6 if vram_gb < 16 else 8
+        vram_cap = 4 if total_vram < 8 else 6 if total_vram < 16 else 8
         result = min(by_cpu, by_ram, by_vram, vram_cap)
         print(f"    [AUTO] CUDA 모드 — CPU={by_cpu} RAM={by_ram} VRAM={by_vram} cap={vram_cap} → {result}")
     else:

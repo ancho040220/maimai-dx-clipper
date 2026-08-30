@@ -127,37 +127,22 @@ def check_environment() -> list:
         return {"id": _id, "label": _label, "status": "ok", "message": "인증 완료"}
 
     def _cuda():
-        import sys
-        # bridge.py가 메인 스레드에서 미리 로드했으면 재사용 (DLL 재로딩 방지)
-        torch = sys.modules.get("torch")
-        if torch is None:
-            try:
-                import torch
-            except ModuleNotFoundError:
-                return {
-                    "id": "cuda", "label": "GPU(CUDA)",
-                    "status": "warning",
-                    "message": "PyTorch가 설치되어 있지 않습니다. setup/setup.bat을 다시 실행하세요.",
-                }
-            except Exception:
-                # torch는 설치됐지만 CUDA DLL 로드 실패 (드라이버 버전 불일치 등)
-                return {
-                    "id": "cuda", "label": "GPU(CUDA)",
-                    "status": "warning",
-                    "message": "PyTorch DLL 로드 실패 — NVIDIA 드라이버를 최신으로 업데이트하거나 "
-                               "setup/setup.bat을 다시 실행하세요.",
-                }
-        try:
-            cuda_ok = torch.cuda.is_available()
-        except Exception:
-            cuda_ok = False
-        if not cuda_ok:
+        from core.gpu import has_nvidia, onnx_uses_gpu
+        _id, _label = "cuda", "GPU 가속"
+        if onnx_uses_gpu():
+            return {"id": _id, "label": _label, "status": "ok", "message": "정상"}
+        if has_nvidia():
             return {
-                "id": "cuda", "label": "GPU(CUDA)",
+                "id": _id, "label": _label,
                 "status": "warning",
-                "message": "CUDA를 사용할 수 없어 CPU로 실행됩니다. 분석 속도가 느릴 수 있습니다.",
+                "message": "GPU는 있지만 가속 패키지가 없어 CPU로 실행됩니다. 속도를 높이려면 "
+                           "pip uninstall onnxruntime 후 pip install onnxruntime-directml 을 실행하세요.",
             }
-        return {"id": "cuda", "label": "GPU(CUDA)", "status": "ok", "message": "정상"}
+        return {
+            "id": _id, "label": _label,
+            "status": "warning",
+            "message": "GPU 가속을 사용할 수 없어 CPU로 실행됩니다. 분석 속도가 느릴 수 있습니다.",
+        }
 
     def _jacket_index():
         from config.settings import JACKET_CDN_URL

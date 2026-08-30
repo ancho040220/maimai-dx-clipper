@@ -1,8 +1,13 @@
-# Common dependencies. torch is installed separately by
-# requirements-gpu.txt or requirements-cpu.txt depending on GPU availability.
-#
 # NOTE: keep this file ASCII-only. pip reads requirements files using the
 # system locale (cp949 on Korean Windows), so non-ASCII comments break install.
+#
+# Detection runs on ONNX Runtime. This installs the CPU build, which works
+# everywhere. To use a GPU, replace it after setup:
+#   pip uninstall onnxruntime
+#   pip install onnxruntime-directml
+# (DirectML works on any DX12 GPU - NVIDIA, AMD or Intel - and needs no CUDA
+#  Toolkit. The app picks the fastest available provider automatically.)
+onnxruntime>=1.17.0
 pytesseract>=0.3.10
 # numpy<2 pinned: paddleocr's imgaug uses np.sctypes (removed in numpy 2.0)
 numpy==1.26.4
@@ -10,7 +15,6 @@ numpy==1.26.4
 opencv-contrib-python==4.10.0.84
 Pillow>=10.0.0
 yt-dlp>=2024.1.0
-ultralytics>=8.0.0
 google-api-python-client>=2.0.0
 google-auth-httplib2>=0.2.0
 google-auth-oauthlib>=1.0.0

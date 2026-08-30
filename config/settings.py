@@ -53,7 +53,8 @@ JACKET_CANDIDATE_MIN   = 0.60     # OCR 판별 시 후보로 남길 최소 점�
 TITLE_OCR_LANG         = "japan"  # 곡명 OCR 모델 (달성률·난이도는 en 모델 유지)
 
 # ── YOLO ───────────────────────────────────────────────────────────────────────
-MODEL_PATH = str(PROJECT_DIR / "best_nano.pt")
+# 추론은 ONNX Runtime으로 한다. best_nano.pt 는 재내보내기용 원본으로 남겨둔다.
+MODEL_PATH = str(PROJECT_DIR / "best_nano.onnx")
 YOLO_CONF  = 0.5
 
 # ── 스캐너 ─────────────────────────────────────────────────────────────────────

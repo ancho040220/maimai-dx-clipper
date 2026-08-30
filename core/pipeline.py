@@ -347,12 +347,9 @@ def process_vod_entries(
 ) -> None:
     """① OCR + ② 병렬 다운로드/역추적 (동시 실행)  ③ OCR 확인 대기  ④ 클립 커팅 + 업로드."""
 
-    # Qt 환경에서 torch DLL 로드 실패 가능성 → spawn 프로세스에서 역추적 실행
-    try:
-        import torch
-        cuda_ok = torch.cuda.is_available()
-    except Exception:
-        cuda_ok = False
+    # 역추적은 spawn 프로세스에서 실행 — GPU 유무에 따라 워커 배분이 달라진다
+    from core.gpu import has_nvidia
+    cuda_ok = has_nvidia()
 
     output_dir.mkdir(parents=True, exist_ok=True)
     result_frames_dir = output_dir / "result_frames"

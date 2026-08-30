@@ -30,12 +30,9 @@ def _seg_venc_args() -> list:
     """세그먼트 concat 재인코딩 시 사용할 비디오 코덱 인자 반환.
     키프레임을 1초마다 강제해 OpenCV seek 정확도를 높인다.
     """
-    try:
-        import torch
-        if torch.cuda.is_available():
-            return ["-c:v", "h264_nvenc", "-g", "30", "-c:a", "copy"]
-    except Exception:
-        pass
+    from core.gpu import has_nvidia
+    if has_nvidia():
+        return ["-c:v", "h264_nvenc", "-g", "30", "-c:a", "copy"]
     return ["-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "copy"]
 
 
@@ -142,11 +139,8 @@ class LiveMonitor:
 
     def _start_ffmpeg_pipe(self) -> subprocess.Popen:
         """FFmpeg 1fps rawvideo 파이프 프로세스 시작."""
-        try:
-            import torch
-            hwaccel = ["-hwaccel", "cuda"] if torch.cuda.is_available() else []
-        except Exception:
-            hwaccel = []
+        from core.gpu import has_nvidia
+        hwaccel = ["-hwaccel", "cuda"] if has_nvidia() else []
         return subprocess.Popen(
             [
                 "ffmpeg", "-y", *hwaccel,

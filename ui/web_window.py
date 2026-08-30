@@ -1,14 +1,8 @@
 """QWebEngineView 기반 메인 윈도우."""
 from pathlib import Path
 
-# Qt D3D11/DXGI DLL보다 torch/CUDA DLL을 먼저 초기화해야 WinError 1114가 발생하지 않음
+# Qt D3D11/DXGI DLL보다 OpenCV DLL을 먼저 초기화해야 WinError 1114가 발생하지 않음
 # (QApplication 생성 전 단계에서 import해야 효과 있음)
-try:
-    import torch
-    torch.cuda.is_available()
-    del torch
-except Exception:
-    pass
 try:
     import cv2
     del cv2

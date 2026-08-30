@@ -1,7 +1,0 @@
-# No NVIDIA GPU: CPU build (about 300 MB). Scanning is slower but works the
-# same. ASCII-only, see requirements.txt.
--r requirements.txt
---extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.6.0
-torchvision>=0.21.0
-torchaudio>=2.6.0
