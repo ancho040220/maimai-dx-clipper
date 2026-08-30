@@ -2,6 +2,7 @@
 import json
 import re
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -518,6 +519,33 @@ class Bridge(QObject):
                     self._emit_log("ok", f"✅ 자켓 인덱스 갱신 완료 (총 {len(hashes)}곡)")
             except Exception as e:
                 self._emit_log("err", f"❌ 자켓 인덱스 갱신 실패: {e}")
+            finally:
+                results = check_environment()
+                self.env_check_result.emit(json.dumps(results, ensure_ascii=False))
+
+        w = PipelineWorker(_run)
+        w.start()
+        self._retry_workers.append(w)
+
+    @pyqtSlot()
+    def update_ytdlp(self):
+        """yt-dlp를 최신 버전으로 갱신 — YouTube 변경으로 다운로드가 막힐 때 필요."""
+        from core.env_check import check_environment
+
+        def _run():
+            try:
+                self._emit_log("info", "⬆️  yt-dlp 업데이트 중...")
+                kwargs = {"capture_output": True, "text": True, "timeout": 300}
+                if sys.platform == "win32":
+                    kwargs["creationflags"] = 0x08000000      # CREATE_NO_WINDOW
+                r = subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], **kwargs)
+                if r.returncode == 0:
+                    self._emit_log("ok", "✅ yt-dlp 업데이트 완료 — 프로그램을 다시 시작하면 적용됩니다.")
+                else:
+                    tail = (r.stderr or r.stdout or "").strip().splitlines()
+                    self._emit_log("err", f"❌ yt-dlp 업데이트 실패: {tail[-1] if tail else '알 수 없는 오류'}")
+            except Exception as e:
+                self._emit_log("err", f"❌ yt-dlp 업데이트 실패: {e}")
             finally:
                 results = check_environment()
                 self.env_check_result.emit(json.dumps(results, ensure_ascii=False))

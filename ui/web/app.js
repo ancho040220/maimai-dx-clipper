@@ -52,6 +52,7 @@ const ENV_CHECK_INITIAL = [
   { id: "firefox_youtube", label: "YouTube 로그인",     status: "loading", desc: "영상 다운로드 및 스트림 접근에 사용" },
   { id: "client_secret",   label: "Google 인증 파일",   status: "loading", desc: "본인 영상인지 확인하고 자동 업로드하는 데 사용" },
   { id: "jacket_index",    label: "자켓 인덱스",         status: "loading", desc: "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)" },
+  { id: "ytdlp",           label: "yt-dlp",             status: "loading", desc: "YouTube 영상 접근 (자주 갱신됨 — 오래되면 다운로드가 실패한다)" },
   { id: "song_db",         label: "maimai DB",          status: "loading", desc: "곡명·레벨 정보 (gekichumai/dxrating, 7일 캐시)" },
   { id: "cuda",            label: "GPU 가속",          status: "loading", desc: "AI 분석 속도 향상 (없으면 CPU로 동작)" },
 ];
@@ -66,6 +67,7 @@ const ITEM_ROLE = {
   firefox_youtube: "required",
   client_secret:   "required",
   jacket_index:    "conditional_ocr",
+  ytdlp:           "required",
   song_db:         "conditional_ocr",
   cuda:            "optional",
 };
@@ -331,7 +333,7 @@ function EnvCheckItem({ item, role, onAction, actionLabel }) {
   );
 }
 
-function EnvCheck({ items, onRecheck, onYoutubeReauth, onJacketUpdate, autoUpload, songOcr }) {
+function EnvCheck({ items, onRecheck, onYoutubeReauth, onJacketUpdate, onYtdlpUpdate, autoUpload, songOcr }) {
   return (
     <div className="card col" style={{ padding: "16px 22px", gap: 10, marginBottom: 18 }}>
       <div className="row between">
@@ -347,8 +349,10 @@ function EnvCheck({ items, onRecheck, onYoutubeReauth, onJacketUpdate, autoUploa
             item={item}
             role={getEffectiveRole(item.id, autoUpload, songOcr)}
             onAction={item.id === "client_secret" ? onYoutubeReauth
-                    : item.id === "jacket_index"  ? onJacketUpdate : undefined}
-            actionLabel={item.id === "jacket_index" ? "⬇️ 업데이트" : undefined}
+                    : item.id === "jacket_index"  ? onJacketUpdate
+                    : item.id === "ytdlp"         ? onYtdlpUpdate : undefined}
+            actionLabel={item.id === "jacket_index" ? "⬇️ 업데이트"
+                       : item.id === "ytdlp"       ? "⬆️ 업데이트" : undefined}
           />
         ))}
       </div>
@@ -854,6 +858,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
       <EnvCheck items={envCheckItems} onRecheck={onRecheck}
         onYoutubeReauth={() => bridge && bridge.reauthenticate_youtube()}
         onJacketUpdate={() => bridge && bridge.update_jacket_index()}
+        onYtdlpUpdate={() => bridge && bridge.update_ytdlp()}
         autoUpload={autoUpload} songOcr={songOcr} />
 
       {/* Stats */}

@@ -14,6 +14,7 @@ _DESCS = {
     "cuda":            "AI 분석 속도 향상 (없으면 CPU로 동작)",
     "firefox_youtube": "영상 다운로드 및 스트림 접근에 사용",
     "jacket_index":    "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)",
+    "ytdlp":           "YouTube 영상 접근 (자주 갱신됨 — 오래되면 다운로드가 실패한다)",
     "song_db":         "곡명·레벨 정보 (gekichumai/dxrating, 7일 캐시)",
 }
 
@@ -144,6 +145,31 @@ def check_environment() -> list:
             "message": "GPU 가속을 사용할 수 없어 CPU로 실행됩니다. 분석 속도가 느릴 수 있습니다.",
         }
 
+    def _ytdlp():
+        """설치본과 PyPI 최신 버전을 비교. yt-dlp는 YouTube 변경에 맞춰 자주 갱신된다."""
+        LABEL = "yt-dlp"
+        def _tup(v):
+            return tuple(int(x) for x in v.split(".") if x.isdigit())
+        try:
+            import yt_dlp
+            cur = yt_dlp.version.__version__
+        except Exception:
+            return {"id": "ytdlp", "label": LABEL, "status": "error",
+                    "message": "yt-dlp가 설치되어 있지 않습니다. setup/setup.bat을 다시 실행하세요."}
+        try:
+            import json as _json, urllib.request
+            req = urllib.request.Request("https://pypi.org/pypi/yt-dlp/json",
+                                         headers={"User-Agent": "maimai-clipper/1.0"})
+            latest = _json.loads(urllib.request.urlopen(req, timeout=8).read())["info"]["version"]
+        except Exception:
+            return {"id": "ytdlp", "label": LABEL, "status": "ok",
+                    "message": f"{cur} (최신 버전 확인 실패 — 네트워크만 확인하면 됩니다)"}
+        if _tup(cur) >= _tup(latest):
+            return {"id": "ytdlp", "label": LABEL, "status": "ok", "message": f"최신 ({cur})"}
+        return {"id": "ytdlp", "label": LABEL, "status": "warning",
+                "message": f"새 버전이 있습니다 — 설치본 {cur}, 최신 {latest}. "
+                           f"오래된 버전은 YouTube 접근이 막힐 수 있습니다."}
+
     def _jacket_index():
         from config.settings import JACKET_CDN_URL
         LABEL = "자켓 인덱스"
@@ -258,6 +284,11 @@ def check_environment() -> list:
             "status": "warning",
             "message": "Firefox에서 youtube.com에 로그인되어 있는지 확인하세요.",
         },
+        "ytdlp": {
+            "id": "ytdlp", "label": "yt-dlp",
+            "status": "warning",
+            "message": "점검 중 오류가 발생했습니다.",
+        },
         "jacket_index": {
             "id": "jacket_index", "label": "자켓 인덱스",
             "status": "error",
@@ -278,11 +309,12 @@ def check_environment() -> list:
             "firefox_youtube": ex.submit(_firefox_youtube),
             "client_secret":   ex.submit(_client_secret),
             "jacket_index":    ex.submit(_jacket_index),
+            "ytdlp":           ex.submit(_ytdlp),
             "song_db":         ex.submit(_song_db),
             "cuda":            ex.submit(_cuda),
         }
 
-        timeouts = {"firefox_youtube": 15, "jacket_index": 20, "song_db": 20}
+        timeouts = {"firefox_youtube": 15, "jacket_index": 20, "song_db": 20, "ytdlp": 15}
         results = []
         for key, f in futures.items():
             try:
