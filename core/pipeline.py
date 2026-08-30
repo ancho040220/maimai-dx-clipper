@@ -59,10 +59,11 @@ def check_video_status(url: str) -> dict:
     except Exception as e:
         raise RuntimeError(translate_error(e)) from e   # 사용자용 번역은 최상위에서 한 번만
     return {
-        "is_live":  info.get("is_live", False),
-        "title":    info.get("title", ""),
-        "channel":  info.get("uploader", ""),
-        "duration": info.get("duration"),
+        "is_live":    info.get("is_live", False),
+        "title":      info.get("title", ""),
+        "channel":    info.get("uploader", ""),
+        "channel_id": info.get("channel_id", ""),   # 본인 영상인지 대조하는 데 사용
+        "duration":   info.get("duration"),
     }
 
 

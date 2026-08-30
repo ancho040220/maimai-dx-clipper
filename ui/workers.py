@@ -44,9 +44,31 @@ class CheckWorker(QThread):
     def run(self):
         try:
             from core.pipeline import check_video_status
-            self.result.emit(json.dumps(check_video_status(self._url), ensure_ascii=False))
+            info = check_video_status(self._url)
+            info["owned"] = self._check_owned(info.get("channel_id", ""))
+            self.result.emit(json.dumps(info, ensure_ascii=False))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    @staticmethod
+    def _check_owned(video_channel_id: str):
+        """영상이 인증된 계정의 채널인지 판정.
+
+        True/False 는 확인된 결과, None 은 확인 불가(인증 실패·조회 실패)를 뜻한다.
+        """
+        if not video_channel_id:
+            return None
+        # 토큰이 없으면 조회하지 않는다 — URL 상태 확인만으로 브라우저 인증 창이
+        # 뜨는 것을 막기 위함이다. 인증은 환경 점검의 재인증 버튼에서 한다.
+        from config.settings import YOUTUBE_TOKEN
+        if not YOUTUBE_TOKEN.exists():
+            return None
+        try:
+            from core.youtube_uploader import YouTubeUploader
+            mine = YouTubeUploader().my_channel_id()
+        except Exception:
+            return None
+        return None if not mine else (mine == video_channel_id)
 
 
 class PipelineWorker(QThread):

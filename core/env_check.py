@@ -10,7 +10,7 @@ _DESCS = {
     "ffmpeg":          "클립 커팅 및 라이브 녹화에 사용",
     "tesseract":       "영상에서 레이팅 숫자를 읽는 OCR 엔진",
     "yolo":            "영상에서 게임 화면 영역을 감지하는 AI 모델",
-    "client_secret":   "YouTube 자동 업로드 인증에만 사용",
+    "client_secret":   "본인 영상인지 확인하고 자동 업로드하는 데 사용",
     "cuda":            "AI 분석 속도 향상 (없으면 CPU로 동작)",
     "firefox_youtube": "영상 다운로드 및 스트림 접근에 사용",
     "jacket_index":    "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)",

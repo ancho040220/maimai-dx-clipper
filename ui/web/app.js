@@ -50,7 +50,7 @@ const ENV_CHECK_INITIAL = [
   { id: "tesseract",       label: "Tesseract OCR",     status: "loading", desc: "영상에서 레이팅 숫자를 읽는 OCR 엔진" },
   { id: "yolo",            label: "YOLO 모델",          status: "loading", desc: "영상에서 게임 화면 영역을 감지하는 AI 모델" },
   { id: "firefox_youtube", label: "YouTube 로그인",     status: "loading", desc: "영상 다운로드 및 스트림 접근에 사용" },
-  { id: "client_secret",   label: "Google 인증 파일",   status: "loading", desc: "YouTube 자동 업로드 인증에만 사용" },
+  { id: "client_secret",   label: "Google 인증 파일",   status: "loading", desc: "본인 영상인지 확인하고 자동 업로드하는 데 사용" },
   { id: "jacket_index",    label: "자켓 인덱스",         status: "loading", desc: "곡 자켓 이미지로 곡명을 식별 (최초 1회 다운로드, 신곡만 추가)" },
   { id: "song_db",         label: "maimai DB",          status: "loading", desc: "곡명·레벨 정보 (gekichumai/dxrating, 7일 캐시)" },
   { id: "cuda",            label: "GPU 가속",          status: "loading", desc: "AI 분석 속도 향상 (없으면 CPU로 동작)" },
@@ -64,7 +64,7 @@ const ITEM_ROLE = {
   tesseract:       "required",
   yolo:            "required",
   firefox_youtube: "required",
-  client_secret:   "conditional",
+  client_secret:   "required",
   jacket_index:    "conditional_ocr",
   song_db:         "conditional_ocr",
   cuda:            "optional",
@@ -518,6 +518,13 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
       setTimeout(() => setUrlErr(""), 3000);
       return;
     }
+    if (vodInfo.owned !== true) {
+      setUrlErr(vodInfo.owned === false
+        ? "본인 채널의 영상만 처리할 수 있습니다."
+        : "YouTube 계정 인증이 필요합니다.");
+      setTimeout(() => setUrlErr(""), 4000);
+      return;
+    }
     setUrlErr("");
 
     let hasError = false;
@@ -611,7 +618,8 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
     item => getEffectiveRole(item.id, autoUpload, songOcr) === "required"
            && item.status !== "ok" && item.status !== "loading"
   );
-  const canStart = !running && !scanDone && !!vodInfo && !vodInfo.error && !!startRating.trim() && !envBlocked;
+  const canStart = !running && !scanDone && !!vodInfo && !vodInfo.error
+    && vodInfo.owned === true && !!startRating.trim() && !envBlocked;
 
   const uploaded  = highlights.filter(h => h.status === "uploaded").length;
   const failedUpl = highlights.filter(h => h.status === "failed").length;
@@ -758,10 +766,37 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
                 <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {vodInfo.title}
                 </div>
-                <div className="muted" style={{ fontSize: 12 }}>{vodInfo.channel}</div>
+                <div className="row gap-6" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="muted" style={{ fontSize: 12 }}>{vodInfo.channel}</span>
+                  {vodInfo.owned === true  && <span className="chip success">내 채널</span>}
+                  {vodInfo.owned === false && <span className="chip danger">다른 채널</span>}
+                  {vodInfo.owned === null  && <span className="chip warning">채널 확인 불가</span>}
+                </div>
               </div>
             </div>
           )
+        )}
+
+        {/* 본인 영상이 아니면 진행을 막는다 */}
+        {vodInfo && !vodInfo.error && vodInfo.owned !== true && (
+          <div className="row gap-8" style={{
+            marginTop: 6, padding: "12px 14px",
+            background: vodInfo.owned === false ? "var(--danger-soft)" : "var(--surface-2)",
+            borderRadius: "var(--r-md)",
+            color: vodInfo.owned === false ? "var(--danger)" : "var(--muted)",
+            fontSize: 12, lineHeight: 1.7,
+          }}>
+            {I.warn}
+            <span>
+              {vodInfo.owned === false ? (
+                <><strong>본인 채널의 영상이 아닙니다.</strong> 이 프로그램은 자신이 송출한
+                방송만 처리합니다. 업로드에 사용할 계정으로 로그인했는지 확인하세요.</>
+              ) : (
+                <><strong>채널을 확인할 수 없습니다.</strong> YouTube 계정 인증이 필요합니다 —
+                환경 점검 패널의 <strong>🔑 재인증</strong>을 눌러 로그인하세요.</>
+              )}
+            </span>
+          </div>
         )}
 
         <hr className="hr" style={{ margin: "6px 0" }} />
@@ -1817,7 +1852,7 @@ const ManualErrors1 = () => (
         <tr><td style={{ fontWeight: 600 }}>Tesseract OCR</td><td><span className="chip danger">필수</span></td><td>오류 시 시작 불가</td></tr>
         <tr><td style={{ fontWeight: 600 }}>YOLO 모델</td><td><span className="chip danger">필수</span></td><td>오류 시 시작 불가</td></tr>
         <tr><td style={{ fontWeight: 600 }}>YouTube 로그인</td><td><span className="chip danger">필수</span></td><td>오류 시 시작 불가</td></tr>
-        <tr><td style={{ fontWeight: 600 }}>Google 인증 파일</td><td><span className="chip warning">조건부</span></td><td>자동 업로드 ON일 때만 필수</td></tr>
+        <tr><td style={{ fontWeight: 600 }}>Google 인증 파일</td><td><span className="chip danger">필수</span></td><td>본인 영상 확인에 필요</td></tr>
         <tr><td style={{ fontWeight: 600 }}>자켓 인덱스</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>maimai DB</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>GPU 가속</td><td><span className="chip">선택</span></td><td>없어도 시작 가능 (CPU 동작)</td></tr>

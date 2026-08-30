@@ -5,7 +5,12 @@ from typing import Optional
 
 from config.settings import CLIENT_SECRET, YOUTUBE_TOKEN
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    # 업로드 대상 채널이 본인 채널인지 확인하는 데 필요 (channels.list mine=true).
+    # 스코프가 바뀌면 기존 토큰이 무효가 되어 재인증이 일어난다.
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
 
 _RETRIABLE_STATUS   = frozenset({500, 502, 503, 504})   # 일시적 서버 오류 → 재시도
 _UPLOAD_MAX_RETRIES = 5
@@ -54,7 +59,13 @@ class YouTubeUploader:
 
         creds = None
         if YOUTUBE_TOKEN.exists():
-            creds = Credentials.from_authorized_user_file(str(YOUTUBE_TOKEN), SCOPES)
+            try:
+                creds = Credentials.from_authorized_user_file(str(YOUTUBE_TOKEN), SCOPES)
+            except Exception:
+                creds = None
+            # readonly 스코프를 추가하기 전에 발급된 토큰은 권한이 모자라므로 다시 받는다
+            if creds is not None and not creds.has_scopes(SCOPES):
+                creds = None
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
@@ -71,6 +82,17 @@ class YouTubeUploader:
             YOUTUBE_TOKEN.write_text(creds.to_json(), encoding="utf-8")
 
         self._yt = build("youtube", "v3", credentials=creds)
+
+    def my_channel_id(self) -> Optional[str]:
+        """인증된 계정의 채널 ID. 조회 실패 시 None."""
+        if self._yt is None:
+            self._authenticate()
+        try:
+            res = self._yt.channels().list(part="id", mine=True).execute()
+            items = res.get("items", [])
+            return items[0]["id"] if items else None
+        except Exception:
+            return None
 
     def upload(self, video_path: Path, title: str, description: str) -> Optional[str]:
         """영상을 YouTube(미등록)로 업로드하고 video ID를 반환. 실패 시 None."""
