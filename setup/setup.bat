@@ -5,7 +5,7 @@ echo   maimai DX Rating Clipper - Install
 echo ============================================================
 echo.
 
-echo [1/4] Checking Python...
+echo [1/5] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 (
     echo   Python not found. Installing via winget...
@@ -28,7 +28,7 @@ if errorlevel 1 (
 for /f "tokens=*" %%v in ('python --version') do echo   Found %%v
 
 echo.
-echo [2/4] Installing Python packages...
+echo [2/5] Installing Python packages...
 python -m pip install -r "%~dp0requirements.txt"
 if errorlevel 1 (
     echo.
@@ -39,7 +39,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/4] Installing ffmpeg...
+echo [3/5] Installing ffmpeg...
 winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.
@@ -47,12 +47,16 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/4] Installing Tesseract OCR...
+echo [4/5] Installing Tesseract OCR...
 winget install UB-Mannheim.TesseractOCR --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.
     echo [WARNING] Tesseract install failed. Try manually: winget install UB-Mannheim.TesseractOCR
 )
+
+echo.
+echo [5/5] Cleaning up unused files...
+python "%~dp0prune.py"
 
 echo.
 echo [OK] Installation complete!
