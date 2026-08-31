@@ -4,4 +4,4 @@
 setup/release.py 가 이 값으로 배포 zip 이름을 만든다.
 """
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "2.0.0"

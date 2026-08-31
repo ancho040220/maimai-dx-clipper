@@ -27,3 +27,7 @@ highlights/
 .env
 
 .claude/
+
+# 개발 전용 — 프로그램 동작에 불필요
+docs/
+CLAUDE.md
