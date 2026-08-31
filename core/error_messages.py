@@ -27,7 +27,7 @@ _ERROR_PATTERNS = [
     ("tesseract",                 "OCR 엔진 오류입니다. setup/setup.bat을 다시 실행하세요."),
     ("cuda out of memory",        "GPU 메모리가 부족합니다. 다른 프로그램을 종료 후 다시 시도하세요."),
     ("cuda",                      "GPU(CUDA) 오류가 발생했습니다. CPU 모드로 재시도합니다."),
-    ("best_nano",                 "AI 모델 파일(best_nano.pt)을 찾을 수 없습니다. 프로그램 파일이 손상됐을 수 있습니다."),
+    ("best_nano",                 "AI 모델 파일(best_nano.onnx)을 찾을 수 없습니다. 프로그램 파일이 손상됐을 수 있습니다."),
 ]
 
 

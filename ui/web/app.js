@@ -1654,32 +1654,31 @@ const ManualSystem = () => (
         <tr><td style={{ fontWeight: 700 }}>OS</td><td>Windows 10 64-bit</td><td>Windows 11 64-bit</td></tr>
         <tr><td style={{ fontWeight: 700 }}>Python</td><td>3.10 이상</td><td>3.11 이상</td></tr>
         <tr><td style={{ fontWeight: 700 }}>RAM</td><td>4 GB</td><td>8 GB 이상</td></tr>
-        <tr><td style={{ fontWeight: 700 }}>GPU</td><td>— (CPU로도 동작)</td><td>NVIDIA CUDA 지원 GPU</td></tr>
+        <tr><td style={{ fontWeight: 700 }}>GPU</td><td>— (CPU로도 동작)</td><td>DirectX 12 지원 GPU</td></tr>
         <tr><td style={{ fontWeight: 700 }}>브라우저</td><td>Firefox</td><td>Firefox</td></tr>
       </tbody>
     </table>
     <ManualNote kind="warn"><strong>현재 Windows 전용</strong>입니다. macOS · Linux는 지원하지 않습니다.</ManualNote>
-    <ManualNote kind="info">GPU 가속가 없으면 CPU로 동작하지만 스캔 속도가 크게 느려집니다. NVIDIA GPU가 있다면 <ManualCode>setup/setup.bat</ManualCode> 실행 시 CUDA 버전이 자동으로 설치됩니다.</ManualNote>
+    <ManualNote kind="info">GPU가 있으면 자동으로 사용합니다. NVIDIA · AMD · Intel 어느 쪽이든 되고 CUDA 설치가 필요 없습니다. GPU가 없으면 CPU로 동작하며 스캔이 느려집니다.</ManualNote>
   </ManualSection>
 );
 
 const ManualInstall = () => (
   <ManualSection num="02" title="최초 설치" subtitle="처음 한 번만 진행하세요.">
-    <ManualSubhead>① Python 설치</ManualSubhead>
-    <div className="col">
-      <ManualStep n="1"><ManualLink href="https://www.python.org/downloads">python.org/downloads</ManualLink> 접속</ManualStep>
-      <ManualStep n="2">노란색 <strong>Download Python 3.x.x</strong> 버튼 클릭</ManualStep>
-      <ManualStep n="3">다운로드된 파일 실행</ManualStep>
-      <ManualStep n="4">⚠️ <strong>반드시</strong> 설치 화면 맨 아래 <ManualCode>Add python.exe to PATH</ManualCode> 체크박스 체크</ManualStep>
-      <ManualStep n="5"><strong>Install Now</strong> 클릭 → 설치 완료 후 <strong>Close</strong></ManualStep>
+    <div style={{ fontSize: 13, lineHeight: 1.7, color: "var(--fg-2)" }}>
+      <ManualCode>setup</ManualCode> 폴더 안의 <ManualCode>setup.bat</ManualCode> 파일을 더블클릭하면
+      필요한 것을 순서대로 알아서 설치합니다.
     </div>
-
-    <ManualSubhead>② 패키지 설치</ManualSubhead>
     <div className="col">
-      <ManualStep n="1"><ManualCode>setup</ManualCode> 폴더 안의 <ManualCode>setup.bat</ManualCode> 파일 더블클릭</ManualStep>
-      <ManualStep n="2">검은 창이 열리면서 자동으로 설치됨</ManualStep>
-      <ManualStep n="3"><strong>"설치 완료!"</strong> 메시지가 나오면 아무 키 눌러서 닫기</ManualStep>
+      <ManualStep n="1"><strong>Python</strong> — 없으면 자동으로 설치합니다.
+        <ManualCode>Close this window and run setup.bat again</ManualCode> 메시지가 나오면
+        창을 닫고 <strong>setup.bat을 한 번 더 실행</strong>하세요 (PATH 반영에 필요합니다)</ManualStep>
+      <ManualStep n="2"><strong>Python 패키지</strong> — 용량이 커서 시간이 걸립니다</ManualStep>
+      <ManualStep n="3"><strong>ffmpeg</strong></ManualStep>
+      <ManualStep n="4"><strong>Tesseract OCR</strong></ManualStep>
+      <ManualStep n="5"><ManualCode>Installation complete!</ManualCode> 메시지가 나오면 아무 키나 눌러 닫기</ManualStep>
     </div>
+    <ManualNote kind="info">Python이 없고 winget도 없는 환경이면 <ManualLink href="https://www.python.org/downloads">python.org/downloads</ManualLink> 에서 직접 설치하세요. 설치 화면 맨 아래 <ManualCode>Add python.exe to PATH</ManualCode> 체크박스를 반드시 체크해야 합니다.</ManualNote>
   </ManualSection>
 );
 
@@ -1697,7 +1696,7 @@ const ManualYoutube = () => (
 );
 
 const ManualGoogle1 = () => (
-  <ManualSection num="04" title="Google Cloud 설정" subtitle="YouTube 자동 업로드에 필요한 Google Cloud 프로젝트를 만들고 API를 활성화합니다.">
+  <ManualSection num="04" title="Google Cloud 설정" subtitle="본인 영상 확인과 자동 업로드에 필요합니다. 이 설정 없이는 프로그램을 시작할 수 없습니다.">
     <ManualSubhead>① Google Cloud 프로젝트 만들기</ManualSubhead>
     <div className="col">
       <ManualStep n="1"><ManualLink href="https://console.cloud.google.com">console.cloud.google.com</ManualLink> 접속</ManualStep>
@@ -1753,7 +1752,7 @@ const ManualRun = () => (
       <ManualStep n="1"><ManualCode>maimai_clipper.exe</ManualCode> 더블클릭</ManualStep>
       <ManualStep n="2">GUI 창이 열리면:
         <ul style={{ margin: "6px 0 0", paddingLeft: 20, lineHeight: 1.85 }}>
-          <li><strong>YouTube URL</strong> 입력 후 <strong>상태 확인</strong></li>
+          <li><strong>YouTube URL</strong> 입력 후 <strong>상태 확인</strong> — <span className="chip success">내 채널</span> 배지가 떠야 진행됩니다</li>
           <li><strong>시작 레이팅</strong> 입력 (예: <ManualCode>14000</ManualCode>)</li>
           <li><strong>시작 / 종료 시간</strong> 입력 (생략하면 전체 구간 분석)</li>
           <li><strong>자동 YouTube 업로드</strong> 토글 설정</li>
@@ -1770,6 +1769,7 @@ const ManualRun = () => (
         </ul>
       </ManualStep>
     </div>
+    <ManualNote kind="warn"><strong>본인 채널의 영상만 처리합니다.</strong> URL을 확인하면 영상의 채널과 로그인한 계정을 대조해, 다른 채널이면 시작이 막힙니다. <span className="chip warning">채널 확인 불가</span>가 뜨면 환경 점검의 <strong>🔑 재인증</strong>으로 로그인하세요.</ManualNote>
     <ManualNote kind="warn">라이브 모드에서는 분석 시작 전에 이미 진행 중인 플레이의 클립은 저장되지 않습니다. 녹화는 분석 시작 시점부터 이루어지므로, 반드시 플레이 전에 분석을 시작하세요.</ManualNote>
   </ManualSection>
 );
@@ -1802,6 +1802,7 @@ const ManualLive = () => (
       </ManualStep>
     </div>
     <ManualNote kind="info">방송 시작 전에 프로그램을 먼저 켜야 합니다. 분석 시작 이전에 진행된 플레이의 클립은 저장되지 않습니다.</ManualNote>
+    <ManualNote kind="warn">시작을 누르면 <strong>시작 레이팅 확인창</strong>이 뜹니다. 값이 실제와 다르면 플레이가 하나도 감지되지 않은 채 끝나므로, 게임에 표시된 레이팅과 같은지 꼭 확인하세요.</ManualNote>
   </ManualSection>
 );
 
@@ -1830,7 +1831,7 @@ const ManualCreds = () => (
       <tbody>
         <tr>
           <td><ManualCode>client_secret.json</ManualCode></td>
-          <td>Google API 인증 (YouTube 업로드용)</td>
+          <td>Google API 인증 (본인 영상 확인 + 업로드)</td>
           <td><span className="chip">한 번만</span></td>
         </tr>
         <tr>
@@ -1844,8 +1845,8 @@ const ManualCreds = () => (
 );
 
 const ManualErrors1 = () => (
-  <ManualSection num="10" title="오류가 날 때 — 환경 점검" subtitle="프로그램 시작 시 8개 항목을 자동으로 확인합니다.">
-    <ManualNote kind="info">프로그램 시작 시 <strong>환경 점검</strong>이 자동 실행됩니다. ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · 자켓 인덱스 · maimai DB · GPU 8개 항목을 확인합니다.</ManualNote>
+  <ManualSection num="10" title="오류가 날 때 — 환경 점검" subtitle="프로그램 시작 시 9개 항목을 자동으로 확인합니다.">
+    <ManualNote kind="info">프로그램 시작 시 <strong>환경 점검</strong>이 자동 실행됩니다. ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · 자켓 인덱스 · yt-dlp · maimai DB · GPU 9개 항목을 확인합니다.</ManualNote>
     <table className="tbl" style={{ background: "transparent" }}>
       <thead><tr>
         <th>항목</th>
@@ -1859,6 +1860,7 @@ const ManualErrors1 = () => (
         <tr><td style={{ fontWeight: 600 }}>YouTube 로그인</td><td><span className="chip danger">필수</span></td><td>오류 시 시작 불가</td></tr>
         <tr><td style={{ fontWeight: 600 }}>Google 인증 파일</td><td><span className="chip danger">필수</span></td><td>본인 영상 확인에 필요</td></tr>
         <tr><td style={{ fontWeight: 600 }}>자켓 인덱스</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
+        <tr><td style={{ fontWeight: 600 }}>yt-dlp</td><td><span className="chip danger">필수</span></td><td>새 버전 알림 시 <strong>⬆️ 업데이트</strong> 클릭</td></tr>
         <tr><td style={{ fontWeight: 600 }}>maimai DB</td><td><span className="chip warning">조건부</span></td><td>곡 정보 추출 ON일 때만 필수</td></tr>
         <tr><td style={{ fontWeight: 600 }}>GPU 가속</td><td><span className="chip">선택</span></td><td>없어도 시작 가능 (CPU 동작)</td></tr>
       </tbody>
@@ -1874,11 +1876,13 @@ const ManualErrors2 = () => (
         <th>해결법</th>
       </tr></thead>
       <tbody>
-        <tr><td>ffmpeg / Tesseract / CUDA / torch 오류</td><td><ManualCode>setup/setup.bat</ManualCode> 다시 실행</td></tr>
-        <tr><td>YOLO 모델 오류</td><td><ManualCode>best_nano.pt</ManualCode> 파일이 프로젝트 루트에 있는지 확인</td></tr>
+        <tr><td>ffmpeg / Tesseract 오류</td><td><ManualCode>setup/setup.bat</ManualCode> 다시 실행</td></tr>
+        <tr><td>YOLO 모델 오류</td><td><ManualCode>best_nano.onnx</ManualCode> 파일이 프로젝트 루트에 있는지 확인</td></tr>
         <tr><td>YouTube 로그인 경고</td><td>Firefox에서 youtube.com에 로그인했는지 확인</td></tr>
         <tr><td>Google 인증 파일 경고</td><td><ManualCode>config/credentials/client_secret.json</ManualCode> 준비 여부 확인</td></tr>
         <tr><td>자켓 인덱스 오류</td><td>인터넷 연결 확인 (자켓 다운로드에 필요). 첫 분석 시 자동으로 다시 시도합니다</td></tr>
+        <tr><td>yt-dlp 새 버전 알림</td><td><strong>⬆️ 업데이트</strong> 클릭 후 프로그램 재시작</td></tr>
+        <tr><td>다른 채널 영상이라고 나옴</td><td>업로드에 사용할 계정으로 로그인했는지 확인. 본인 채널 영상만 처리됩니다</td></tr>
         <tr><td>"Sign in to confirm you're not a bot"</td><td>Firefox에서 YouTube 로그인 확인</td></tr>
         <tr><td>곡 정보가 표시되지 않음</td><td><strong>곡 정보 추출</strong> 토글 ON 확인</td></tr>
         <tr><td>YouTube 업로드 실패 / 인증 오류</td><td>환경 점검 패널의 <strong>🔑 재인증</strong> 클릭</td></tr>

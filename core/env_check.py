@@ -54,7 +54,7 @@ def check_environment() -> list:
             return {
                 "id": "yolo", "label": "YOLO 모델",
                 "status": "error",
-                "message": "best_nano.pt 파일이 없습니다. 프로그램 파일이 손상됐을 수 있습니다.",
+                "message": "best_nano.onnx 파일이 없습니다. 프로그램 파일이 손상됐을 수 있습니다.",
             }
         return {"id": "yolo", "label": "YOLO 모델", "status": "ok", "message": "정상"}
 
@@ -267,7 +267,7 @@ def check_environment() -> list:
         "yolo": {
             "id": "yolo", "label": "YOLO 모델",
             "status": "error",
-            "message": "점검 중 오류가 발생했습니다. best_nano.pt 파일을 확인하세요.",
+            "message": "점검 중 오류가 발생했습니다. best_nano.onnx 파일을 확인하세요.",
         },
         "client_secret": {
             "id": "client_secret", "label": "Google 인증 파일",
