@@ -527,6 +527,11 @@ class Bridge(QObject):
         w.start()
         self._retry_workers.append(w)
 
+    @pyqtSlot(result=str)
+    def get_version(self) -> str:
+        from config.version import APP_VERSION
+        return APP_VERSION
+
     @pyqtSlot()
     def update_ytdlp(self):
         """yt-dlp를 최신 버전으로 갱신 — YouTube 변경으로 다운로드가 막힐 때 필요."""

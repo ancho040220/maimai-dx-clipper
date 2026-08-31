@@ -389,7 +389,7 @@ function NavItem({ id, label, icon, badge, activeScreen, setScreen }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseInfo }) {
+function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseInfo, appVersion }) {
   const failedCount = highlights.filter(h => h.status === "failed").length;
   const dotCls = scanStatus === "running" ? "live" : scanStatus === "error" ? "err" : scanStatus === "done" ? "ok" : "idle";
   const statusLabel = scanStatus === "running" ? "스캔 중" : scanStatus === "error" ? "오류" : scanStatus === "done" ? "성공" : "대기";
@@ -421,7 +421,10 @@ function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseI
       <div className="row gap-10" style={{ padding: "0 10px", marginBottom: 14 }}>
         <div className="col" style={{ lineHeight: 1.2 }}>
           <div style={{ fontSize: 16, fontWeight: 800 }}>maimai DX</div>
-          <div style={{ fontSize: 11.5, color: "var(--muted)", letterSpacing: "0.06em" }}>RATING CLIPPER</div>
+          <div className="row gap-6" style={{ alignItems: "baseline" }}>
+            <span style={{ fontSize: 11.5, color: "var(--muted)", letterSpacing: "0.06em" }}>RATING CLIPPER</span>
+            {appVersion && <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>v{appVersion}</span>}
+          </div>
         </div>
       </div>
 
@@ -1996,6 +1999,7 @@ function ScreenManual({ setScreen }) {
 
 function App() {
   const [bridge,         setBridge]         = useState(null);
+  const [appVersion,     setAppVersion]     = useState("");
   const [screen,         setScreen]         = useState("main");
   const [scanStatus,     setScanStatus]     = useState("idle");
   const [vodInfo,        setVodInfo]        = useState(null);
@@ -2026,6 +2030,8 @@ function App() {
     new QWebChannel(qt.webChannelTransport, (channel) => {
       const b = channel.objects.bridge;
       setBridge(b);
+
+      if (b.get_version) b.get_version(v => setAppVersion(v));
 
       b.status_result.connect((json) => setVodInfo(JSON.parse(json)));
       b.status_error.connect((msg)  => setVodInfo({ error: msg }));
@@ -2144,6 +2150,7 @@ function App() {
         detections={detections}
         highlights={highlights}
         phaseInfo={phaseInfo}
+        appVersion={appVersion}
       />
       <main style={{ flex: 1, overflowY: "auto" }}>
         {screen === "main" && (

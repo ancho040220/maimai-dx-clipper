@@ -4,7 +4,14 @@
 
 ## 다운로드
 
-**[▶ 최신 버전 다운로드 (maimai_clipper.exe)](https://github.com/ancho040220/maimai-dx-clipper/releases/latest)**
+**[▶ 최신 버전 다운로드](https://github.com/ancho040220/maimai-dx-clipper/releases/latest)**
+
+1. 위 링크에서 `maimai-dx-clipper-vX.X.X.zip` 을 받습니다
+2. 원하는 폴더에 **압축을 풉니다** (경로에 한글이 없는 곳을 권장합니다)
+3. `setup` 폴더의 `setup.bat` 을 한 번 실행합니다 → [최초 설치](#최초-설치-처음-한-번만)
+4. 이후에는 `maimai_clipper.exe` 를 더블클릭하면 됩니다
+
+> 현재 버전은 프로그램 왼쪽 위 로고 아래에 표시됩니다.
 
 ---
 
@@ -215,7 +222,7 @@ API 키나 별도 설정이 필요 없고, 첫 분석 시 자켓을 자동으로
 | Sign in to confirm you're not a bot | Firefox에서 YouTube에 로그인했는지 확인하세요. |
 | 곡 정보가 표시되지 않음 | **곡 정보 추출** 토글이 ON인지 확인 |
 | YouTube 업로드 실패 / 인증 오류 | 환경 점검 패널의 **🔑 재인증** 버튼 클릭, 또는 `config/credentials/youtube_token.json` 삭제 후 재실행 |
-
+| 다른 채널 영상이라고 나옴 | 업로드에 사용할 계정으로 로그인했는지 확인 — 본인 채널 영상만 처리됩니다 |
 | Python을 찾을 수 없음 | Python 재설치 (PATH 체크 확인) |
 
 ---
