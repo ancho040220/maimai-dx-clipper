@@ -2,6 +2,8 @@
 cache/
 # dxdata 7일 TTL 캐시 — 없으면 자동 다운로드
 config/song_db_cache.json
+# 사용자별 토글 상태 — 기본값은 settings.py의 _DEFAULT_USER_CONFIG
+config/user_config.json
 
 # PyInstaller 빌드 아티팩트
 build/
