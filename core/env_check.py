@@ -96,8 +96,16 @@ def check_environment() -> list:
             from google.auth.transport.requests import Request
             from google.auth.exceptions import RefreshError
 
-            _SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+            # 스코프는 uploader 가 단일 출처 — 여기서 따로 적으면 늘었을 때 어긋난다
+            from core.youtube_uploader import SCOPES as _SCOPES, token_has_scopes
             creds = Credentials.from_authorized_user_file(str(YOUTUBE_TOKEN), _SCOPES)
+
+            if not token_has_scopes():
+                return {
+                    "id": _id, "label": _label, "status": "warning",
+                    "message": "권한 범위가 바뀌어 다시 인증해야 합니다. "
+                               "🔑 재인증을 눌러 로그인하세요.",
+                }
 
             if not creds.valid:
                 if creds.expired and creds.refresh_token:

@@ -28,6 +28,21 @@ def _http_error_reason(exc) -> str:
     return ""
 
 
+def token_has_scopes() -> bool:
+    """저장된 토큰이 현재 요구 스코프를 모두 갖고 있는지.
+
+    Credentials.from_authorized_user_file(path, SCOPES) 는 넘긴 스코프로
+    덮어쓰므로 has_scopes() 로는 판별할 수 없다. 파일 내용을 직접 본다.
+    """
+    try:
+        if not YOUTUBE_TOKEN.exists():
+            return False
+        saved = json.loads(YOUTUBE_TOKEN.read_text(encoding="utf-8")).get("scopes") or []
+        return set(SCOPES).issubset(set(saved))
+    except Exception:
+        return False
+
+
 class YouTubeUploader:
     """
     최초 실행 시 브라우저에서 OAuth 인증 → youtube_token.json에 토큰 저장.
@@ -64,7 +79,7 @@ class YouTubeUploader:
             except Exception:
                 creds = None
             # readonly 스코프를 추가하기 전에 발급된 토큰은 권한이 모자라므로 다시 받는다
-            if creds is not None and not creds.has_scopes(SCOPES):
+            if creds is not None and not token_has_scopes():
                 creds = None
 
         if not creds or not creds.valid:

@@ -2,5 +2,5 @@
   "clipSelect": true,
   "ocrEdit": true,
   "autoUpload": false,
-  "songOcr": true
+  "songOcr": false
 }

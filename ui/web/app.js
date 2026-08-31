@@ -295,7 +295,7 @@ function EnvCheckItem({ item, role, onAction, actionLabel }) {
         <div className="col" style={{ gap: 1 }}>
           <div className="row gap-6" style={{ alignItems: "center" }}>
             <span style={{ fontWeight: 600, minWidth: 110, flexShrink: 0 }}>{item.label}</span>
-            <span style={{ fontSize: 10, color: "var(--muted)" }}>자동 업로드 꺼짐</span>
+            <span style={{ fontSize: 10, color: "var(--muted)" }}>{ITEM_ROLE[item.id] === "conditional_ocr" ? "곡 정보 추출 꺼짐" : "자동 업로드 꺼짐"}</span>
           </div>
           {descEl}
         </div>

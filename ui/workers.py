@@ -63,6 +63,11 @@ class CheckWorker(QThread):
         from config.settings import YOUTUBE_TOKEN
         if not YOUTUBE_TOKEN.exists():
             return None
+        # 스코프가 모자란 옛 토큰이면 인증 흐름이 시작돼 브라우저가 열린다.
+        # URL 상태 확인만으로 그런 일이 생기면 안 되므로 여기서 멈춘다.
+        from core.youtube_uploader import token_has_scopes
+        if not token_has_scopes():
+            return None
         try:
             from core.youtube_uploader import YouTubeUploader
             mine = YouTubeUploader().my_channel_id()
