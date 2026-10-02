@@ -67,6 +67,31 @@ def check_video_status(url: str) -> dict:
     }
 
 
+def fetch_stream_start(url: str):
+    """방송 시작 시각(epoch)과 정확 여부. 알 수 없으면 (None, False).
+
+    라이브 VOD는 release_timestamp(실제 시작 시각)가 있어 분 단위로 맞는다.
+    일반 업로드 영상은 날짜(upload_date)만 알 수 있어 정확 여부를 False로 돌려준다.
+    날짜 표기는 부가 기능이라 실패해도 클립 작업을 막지 않는다.
+    """
+    try:
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True,
+                "no_check_formats": True, "ignore_no_formats_error": True,
+                "no_playlist": True, **ytdlp_cookie_opts()}
+        with ytdlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        ts = info.get("release_timestamp")
+        if ts:
+            return float(ts), True
+        d = info.get("upload_date")          # YYYYMMDD
+        if d:
+            import datetime as _dt
+            return _dt.datetime.strptime(d, "%Y%m%d").timestamp(), False
+    except Exception as e:
+        print(f"  ⚠️  방송 날짜 조회 실패 (날짜 표기 생략): {e}")
+    return None, False
+
+
 def get_stream_url(url: str) -> str:
     """yt-dlp로 direct 스트림 URL만 추출 (다운로드 없음)."""
     cmd = [
@@ -202,6 +227,7 @@ def _build_ocr_payload(
             "achievement":    ocr_result.achievement    if good else None,
             "rank":           ocr_result.rank           if good else None,
             "internal_level": ocr_result.internal_level if good else None,
+            "chart_type":     ocr_result.chart_type     if good else None,
             "confidence":     ocr_result.confidence     if ocr_result else 0.0,
         })
     print(f"[OCR_PROG] {json.dumps({'done': n, 'total': n}, ensure_ascii=False)}")
@@ -220,6 +246,7 @@ def _auto_apply_ocr(payload: list, history: list) -> None:
             entry["achievement"]    = item.get("achievement")
             entry["rank"]           = item.get("rank")
             entry["internal_level"] = item.get("internal_level")
+            entry["chart_type"]     = item.get("chart_type")
 
 
 def _apply_ocr_to_entry(entry: dict, ocr_result) -> None:
@@ -231,6 +258,7 @@ def _apply_ocr_to_entry(entry: dict, ocr_result) -> None:
     entry["achievement"]    = ocr_result.achievement
     entry["rank"]           = ocr_result.rank
     entry["internal_level"] = ocr_result.internal_level
+    entry["chart_type"]     = ocr_result.chart_type
     entry["ocr_confidence"] = ocr_result.confidence
 
 
@@ -417,9 +445,11 @@ def process_vod_entries(
     # ── Phase 3 — 클립 커팅 + 업로드 ─────────────────────────────────────────
     final_history = confirmed_history_ref if confirmed_history_ref is not None else history
     print(f"\n▶ Phase 3 — 클립 커팅 + 업로드 ({len(final_history)}개)")
+    stream_start, start_precise = fetch_stream_start(url)
     _cut_and_upload_clips(
         final_history, url, output_dir, uploader,
         start_dl_map, lookback_map, cancel_event=cancel_event,
+        stream_start=stream_start, stream_start_precise=start_precise,
     )
 
 
@@ -442,7 +472,7 @@ def process_live_clips(
     클립 다운로드/역추적/커팅은 이미 Phase 1에서 완료됐으므로 수행하지 않는다.
     """
     import cv2
-    from core.clip_builder import build_clip_metadata, _title_to_filename, _save_clip_meta
+    from core.clip_builder import build_clip_metadata, clip_filename, _save_clip_meta
     from core.scanner_parallel import fmt_time
 
     # 곡 정보 추출 — Phase 1에서 저장된 결과 화면 이미지로 분석
@@ -490,6 +520,7 @@ def process_live_clips(
             "achievement":    entry.get("achievement"),
             "rank":           entry.get("rank"),
             "internal_level": entry.get("internal_level"),
+            "chart_type":     entry.get("chart_type"),
             "confidence":     entry.get("ocr_confidence", 0.0),
         })
 
@@ -523,8 +554,7 @@ def process_live_clips(
             continue
 
         title, desc = build_clip_metadata(entry)
-        ts_tag      = time.strftime("%Y%m%d_%H%M%S")
-        final_file  = output_dir / f"{_title_to_filename(title)}_{ts_tag}.mp4"
+        final_file  = output_dir / clip_filename(entry, title, i)
 
         try:
             clip_path.rename(final_file)

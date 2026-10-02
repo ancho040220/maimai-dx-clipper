@@ -927,6 +927,7 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
   const [difficulty,    setDifficulty]    = useState(det.difficulty     || "");
   const [achievement,   setAchievement]   = useState(det.achievement    != null ? String(det.achievement)    : "");
   const [internalLevel, setInternalLevel] = useState(det.internal_level != null ? String(det.internal_level) : "");
+  const [chartType,     setChartType]     = useState(det.chart_type     || "");   // "std" | "dx" | ""
   const [suggestions,   setSuggestions]   = useState([]);
   const [showSug,       setShowSug]       = useState(false);
   const [hovIdx,        setHovIdx]        = useState(-1);
@@ -949,13 +950,13 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
     return () => clearTimeout(t);
   }, [bridge, songTitle]);
 
-  // 곡명+난이도 → 내부 레벨 자동 입력
+  // 곡명+난이도+채보(표준/DX) → 내부 레벨 자동 입력
   useEffect(() => {
     if (!bridge || !songTitle || !difficulty) return;
-    bridge.lookup_internal_level(songTitle, difficulty, (level) => {
+    bridge.lookup_internal_level(songTitle, difficulty, chartType, (level) => {
       if (level) setInternalLevel(level);
     });
-  }, [bridge, songTitle, difficulty]);
+  }, [bridge, songTitle, difficulty, chartType]);
 
   function selectSuggestion(title) {
     setSongTitle(title);
@@ -1040,14 +1041,22 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
         </div>
         <div className="col" style={{ gap: 4 }}>
           <label style={{ fontSize: 12, color: "var(--muted)" }}>내부 레벨</label>
-          <input style={{ ...inputSt, width: "40%" }} type="number" step="0.1"
-            value={internalLevel} onChange={e => setInternalLevel(e.target.value)} placeholder="-" />
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>곡명+난이도 확정 시 자동 입력</div>
+          <div className="row gap-8">
+            <input style={{ ...inputSt, width: "40%" }} type="number" step="0.1"
+              value={internalLevel} onChange={e => setInternalLevel(e.target.value)} placeholder="-" />
+            <select style={{ ...inputSt, width: "40%", cursor: "pointer" }} value={chartType} onChange={e => setChartType(e.target.value)}>
+              <option value="">채보 자동</option>
+              <option value="std">스탠다드</option>
+              <option value="dx">DX</option>
+            </select>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>곡명+난이도+채보 확정 시 자동 입력 (스탠다드/DX는 화면에서 자동 판별)</div>
         </div>
         <div className="row gap-8" style={{ marginTop: 4 }}>
           <button className="btn accent" onClick={() => onSave({
             song_title: songTitle || null, difficulty: difficulty || null,
             achievement: achNum, rank, internal_level: internalLevel !== "" ? parseFloat(internalLevel) : null,
+            chart_type: chartType || null,
           })}>✓ 저장</button>
           <button className="btn ghost" onClick={onCancel}>취소</button>
           <span className="muted" style={{ fontSize: 12 }}>저장 후 클립 제목·설명에 반영됩니다</span>
@@ -1124,6 +1133,7 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
         achievement:    ach,
         rank:           rnk,
         internal_level: edit.internal_level !== undefined ? edit.internal_level : (d.internal_level ?? null),
+        chart_type:     edit.chart_type     !== undefined ? edit.chart_type     : (d.chart_type     ?? null),
       };
     });
     onConfirmOcr(payload);
@@ -2086,6 +2096,7 @@ function App() {
               achievement:    ocr.achievement    != null ? ocr.achievement    : d.achievement,
               rank:           ocr.rank           != null ? ocr.rank           : d.rank,
               internal_level: ocr.internal_level != null ? ocr.internal_level : d.internal_level,
+              chart_type:     ocr.chart_type     != null ? ocr.chart_type     : d.chart_type,
             };
           });
         });

@@ -106,6 +106,7 @@ class SongResult:
     achievement:    Optional[float]
     rank:           str
     confidence:     float
+    chart_type:     Optional[str] = None   # "std"(스탠다드) / "dx"(でらっくす) / None(판별 불가)
 
 
 # ── 전처리 ────────────────────────────────────────────────────────────────────
@@ -170,6 +171,30 @@ def _find_text_x_start(img: np.ndarray, y1: int, y2: int) -> int:
 
 
 # ── 난이도 판별 ───────────────────────────────────────────────────────────────
+
+# 난이도 띠 오른쪽의 채보 종류 알약 (1000×1000 기준) — 스탠다드는 파란 알약, DX는 흰 알약
+_TYPE_Y1, _TYPE_Y2, _TYPE_X1, _TYPE_X2 = 168, 186, 622, 690
+
+
+def detect_chart_type(img: np.ndarray) -> Optional[str]:
+    """결과 화면의 알약 색으로 표준/DX 판별. 애매하면 None (추측하지 않는다).
+
+    같은 곡·난이도라도 표준과 DX의 레벨이 다르다(83곡). 샘플 8장에서 파랑 0.72 / 흰색 0.53으로
+    서로 다른 쪽이 0.1 미만이라 간격이 크다.
+    """
+    roi = img[_TYPE_Y1:_TYPE_Y2, _TYPE_X1:_TYPE_X2]
+    if roi.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    blue  = float(((h >= 95) & (h <= 118) & (s >= 110) & (v >= 150)).mean())
+    white = float(((s <= 70) & (v >= 190)).mean())
+    if blue >= 0.4 and blue > white:
+        return "std"
+    if white >= 0.3 and white > blue:
+        return "dx"
+    return None
+
 
 def detect_difficulty(img: np.ndarray, song_bar_y1: int, x_start: int = 10) -> str:
     """난이도 뱃지 영역을 OCR로 판별. 실패 시 HSV 색상 분석으로 fallback."""
@@ -367,7 +392,8 @@ def extract_from_frames(
 
     diff           = detect_difficulty(best_frame, y1, x_start)
     achievement    = ocr_achievement(best_frame)
-    internal_level = get_internal_level(raw_songs, matched_title, diff)
+    chart_type     = detect_chart_type(best_frame)
+    internal_level = get_internal_level(raw_songs, matched_title, diff, chart_type=chart_type)
 
     return SongResult(
         title=matched_title,
@@ -376,4 +402,5 @@ def extract_from_frames(
         achievement=achievement,
         rank=achievement_to_rank(achievement) if achievement is not None else "",
         confidence=ratio,
+        chart_type=chart_type,
     )

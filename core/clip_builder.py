@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -11,11 +12,66 @@ from core.downloader import _ffmpeg_trim
 from core.youtube_uploader import YouTubeUploader
 
 
+YT_TITLE_MAX = 100   # YouTube 제목 한도
+
+
+def _title_tag(entry: dict) -> str:
+    """제목 머리말. 플레이 날짜를 알면 [maimai DX 2026-09-30]."""
+    dt = play_datetime(entry)
+    return f"[maimai DX {dt.strftime('%Y-%m-%d')}]" if dt else "[maimai DX]"
+
+
+def _fit_title(head: str, song: str, tail: str) -> str:
+    """한도를 넘으면 곡명만 …로 줄인다 (난이도·달성률·레이팅은 유지). 곡명 전체는 설명란에 있다."""
+    if len(head) + len(song) + len(tail) <= YT_TITLE_MAX:
+        return head + song + tail
+    room = max(YT_TITLE_MAX - len(head) - len(tail) - 1, 1)
+    return (head + song[:room].rstrip() + "…" + tail)[:YT_TITLE_MAX]
+
+
 def _title_to_filename(title: str) -> str:
     """YouTube 제목 → Windows 파일명 (공백 유지, | → -, 불가 문자만 제거)."""
     s = title.replace('|', '-')
     s = re.sub(r'[\\/:*?"<>]', '', s)
     return s.strip()
+
+
+def play_datetime(entry: dict) -> Optional[datetime]:
+    """클립의 플레이 일시(로컬 시간). 알 수 없으면 None.
+
+    라이브는 녹화 시각(played_at)을, VOD는 방송 시작 시각 + 영상 내 위치를 쓴다.
+    """
+    at = entry.get("played_at")
+    if at is None and entry.get("stream_start") is not None:
+        pos = entry.get("play_timestamp", entry.get("timestamp"))
+        if pos is not None:
+            at = entry["stream_start"] + pos
+    return datetime.fromtimestamp(at) if at is not None else None
+
+
+def _type_label(entry: dict) -> str:
+    """설명란용 채보 종류. 표준/DX를 모르면 비운다."""
+    return {"std": " 스탠다드", "dx": " DX"}.get(entry.get("chart_type"), "")
+
+
+def _date_line(entry: dict) -> str:
+    """설명란용 날짜 줄. 시각이 정확하지 않으면 날짜만."""
+    dt = play_datetime(entry)
+    if dt is None:
+        return ""
+    fmt = "%Y-%m-%d %H:%M" if entry.get("played_precise", True) else "%Y-%m-%d"
+    return f"플레이 일시: {dt.strftime(fmt)}\n"
+
+
+def clip_filename(entry: dict, title: str, index: int) -> str:
+    """파일명: 플레이 날짜가 앞에 붙는다(정렬이 곧 시간순). 날짜를 모르면 기존처럼 뒤에 현재 시각."""
+    dt = play_datetime(entry)
+    base = _title_to_filename(re.sub(r"\[maimai DX \d{4}-\d{2}-\d{2}\]", "[maimai DX]", title))
+    if dt is None:
+        return f"{base}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    if entry.get("played_precise", True):
+        return f"{dt.strftime('%Y%m%d_%H%M')}_{base}.mp4"
+    return f"{dt.strftime('%Y%m%d')}_{index + 1:02d}_{base}.mp4"
 
 
 def build_clip_metadata(entry: dict) -> Tuple[str, str]:
@@ -29,34 +85,32 @@ def build_clip_metadata(entry: dict) -> Tuple[str, str]:
 
         ach = entry.get("achievement")
         ach_str = f"{ach:.4f}%" if ach is not None else ""
-        title = (
-            f"[maimai DX] {entry['song_title']} "
-            f"{entry.get('difficulty', '')} Lv.{const_str} {ach_str} {entry.get('rank', '')}"
-        )
+        tail = f" {entry.get('difficulty', '')} Lv.{const_str} {ach_str} {entry.get('rank', '')}"
         if badge_str:
-            title += f" {badge_str}"
-        title += f" | {entry['current_rating']} (+{entry['change']})"
+            tail += f" {badge_str}"
+        tail += f" | {entry['current_rating']} (+{entry['change']})"
+        title = _fit_title(f"{_title_tag(entry)} ", entry["song_title"], tail)
 
         desc_ach_str = f"{ach:.4f}%" if ach is not None else "-"
         description = (
             f"곡명: {entry['song_title']}\n"
-            f"난이도: {entry.get('difficulty', '')} (Lv.{const_str})\n"
+            f"난이도: {entry.get('difficulty', '')}{_type_label(entry)} (Lv.{const_str})\n"
             f"달성률: {desc_ach_str}\n"
             f"랭크: {entry.get('rank', '')}"
         )
         if badge_str:
             description += f"\n판정: {badge_str}"
         description += (
-            f"\n\n레이팅: {entry.get('previous_rating', '?')} → "
+            f"\n\n{_date_line(entry)}레이팅: {entry.get('previous_rating', '?')} → "
             f"{entry['current_rating']} (+{entry['change']})\n"
             f"플레이 시작: {entry.get('play_url', '')}\n"
             f"결과 시점: {entry.get('yt_url', '')}"
         )
     else:
         mode_label = MODE_LABELS.get(entry.get("mode", ""), "미확인")
-        title = f"[maimai DX] Rating Up! {entry['current_rating']} (+{entry['change']})"
+        title = f"{_title_tag(entry)} Rating Up! {entry['current_rating']} (+{entry['change']})"
         description = (
-            f"레이팅 상승: {entry.get('previous_rating', '?')} → "
+            f"{_date_line(entry)}레이팅 상승: {entry.get('previous_rating', '?')} → "
             f"{entry['current_rating']} (+{entry['change']})\n"
             f"모드: {mode_label}\n"
             f"플레이 시작: {entry.get('play_url', '')}\n"
@@ -86,6 +140,8 @@ def _cut_and_upload_clips(
     start_dl_map: dict,
     lookback_map: dict,
     cancel_event=None,
+    stream_start: Optional[float] = None,
+    stream_start_precise: bool = True,
 ) -> None:
     """각 항목별 클립 커팅 → 업로드. OCR 결과는 history 항목에 이미 적용되어 있어야 함."""
     n = len(history)
@@ -128,9 +184,11 @@ def _cut_and_upload_clips(
 
         clip_start = max(0.0, local_play_ts - HIGHLIGHT_PRE)
         clip_end   = local_result_ts + HIGHLIGHT_POST
-        ts_tag     = time.strftime("%Y%m%d_%H%M%S")
+        if stream_start is not None:
+            entry["stream_start"]   = stream_start
+            entry["played_precise"] = stream_start_precise
         title, desc = build_clip_metadata(entry)
-        out_file   = output_dir / f"{_title_to_filename(title)}_{ts_tag}.mp4"
+        out_file   = output_dir / clip_filename(entry, title, i)
 
         if _ffmpeg_trim(temp_file, clip_start, clip_end, out_file):
             n_cut += 1

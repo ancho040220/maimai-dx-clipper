@@ -311,6 +311,7 @@ class LiveMonitor:
             "yt_url":    yt_timestamp_url(self.url, result_stream_sec),
             "mode":      mode,
             "timestamp": result_stream_sec,
+            "played_at": play_wall,
             "clip_path": str(out_file),
         }
 

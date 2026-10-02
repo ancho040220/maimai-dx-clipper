@@ -415,12 +415,12 @@ class Bridge(QObject):
         matches = [t for t in self._song_titles if q in t.lower()][:10]
         return json.dumps(matches, ensure_ascii=False)
 
-    @pyqtSlot(str, str, result=str)
-    def lookup_internal_level(self, title: str, difficulty: str) -> str:
-        """곡명+난이도로 내부 레벨 조회. 없으면 빈 문자열 반환."""
+    @pyqtSlot(str, str, str, result=str)
+    def lookup_internal_level(self, title: str, difficulty: str, chart_type: str) -> str:
+        """곡명+난이도(+표준/DX)로 내부 레벨 조회. 없으면 빈 문자열 반환."""
         self._ensure_song_db()
         from data.song_db import get_internal_level
-        level = get_internal_level(self._raw_songs, title, difficulty)
+        level = get_internal_level(self._raw_songs, title, difficulty, chart_type=chart_type or None)
         return str(level) if level is not None else ""
 
     @pyqtSlot(str)

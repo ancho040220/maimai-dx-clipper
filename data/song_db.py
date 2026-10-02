@@ -99,16 +99,23 @@ def get_internal_level(
     title: str,
     difficulty: str,
     region: str = "intl",
+    chart_type: Optional[str] = None,
 ) -> Optional[float]:
-    """title + difficulty → internalLevelValue. regionOverrides 우선."""
+    """title + difficulty (+ 표준/DX) → internalLevelValue. regionOverrides 우선.
+
+    표준·DX 채보가 둘 다 있는 곡(83곡)은 같은 난이도라도 레벨이 다르다.
+    chart_type("std"/"dx")을 모르면 처음 맞는 채보를 쓰지만, 알면 그 채보를 우선한다.
+    """
     diff_key = _DIFF_KEY.get(difficulty, difficulty.lower())
 
     for song in raw_songs:
         if song.get("title") != title:
             continue
-        for sheet in song.get("sheets", []):
-            if sheet.get("difficulty") != diff_key:
-                continue
+        sheets = [s for s in song.get("sheets", []) if s.get("difficulty") == diff_key]
+        if chart_type:
+            typed = [s for s in sheets if s.get("type") == chart_type]
+            sheets = typed or sheets
+        for sheet in sheets:
             overrides = sheet.get("regionOverrides", {}).get(region, {})
             if "internalLevelValue" in overrides:
                 return float(overrides["internalLevelValue"])
