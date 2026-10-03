@@ -472,7 +472,7 @@ def process_live_clips(
     클립 다운로드/역추적/커팅은 이미 Phase 1에서 완료됐으므로 수행하지 않는다.
     """
     import cv2
-    from core.clip_builder import build_clip_metadata, clip_filename, _save_clip_meta
+    from core.clip_builder import build_clip_metadata, clip_filename, _save_clip_meta, refresh_pending_memo
     from core.scanner_parallel import fmt_time
 
     # 곡 정보 추출 — Phase 1에서 저장된 결과 화면 이미지로 분석
@@ -582,7 +582,10 @@ def process_live_clips(
             else:
                 pending_uploads.append(final_file.name)
 
+    memo = refresh_pending_memo(output_dir, getattr(uploader, "last_error", None))
     if pending_uploads:
         print("\n🚨  업로드 실패 영상 — highlights/ 폴더에서 수동으로 업로드하세요:")
         for name in pending_uploads:
             print(f"    {name}")
+    if memo:
+        print(f"📝  제목·설명 메모: highlights/{memo.name}")

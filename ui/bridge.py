@@ -270,6 +270,9 @@ class Bridge(QObject):
                     meta_path.unlink(missing_ok=True)
                 except OSError:
                     pass
+            # 목록은 폴더에 남은 클립 기준이라, 업로드가 끝났든 실패했든 다시 만든다
+            from core.clip_builder import refresh_pending_memo
+            refresh_pending_memo(file_path.parent, getattr(uploader, "last_error", None))
 
         self._retry_workers = [w for w in self._retry_workers if w.isRunning()]
         worker = PipelineWorker(_do_retry)

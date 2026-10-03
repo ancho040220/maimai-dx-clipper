@@ -120,6 +120,64 @@ def build_clip_metadata(entry: dict) -> Tuple[str, str]:
     return title, description
 
 
+PENDING_MEMO_NAME = "업로드_대기_목록.txt"
+
+_REASON_TEXT = {
+    "quotaExceeded":       "YouTube API 일일 할당량을 초과해서 오늘은 업로드할 수 없습니다.",
+    "uploadLimitExceeded": "YouTube 계정의 업로드 한도를 초과했습니다.",
+    "authFailed":          "인증 오류입니다. 환경 점검에서 재인증이 필요할 수 있습니다.",
+    "uploadFailed":        "업로드에 실패했습니다 (네트워크 등).",
+}
+
+
+def refresh_pending_memo(output_dir: Path, reason_code: Optional[str] = None) -> Optional[Path]:
+    """highlights/ 에 남은(업로드 안 된) 클립의 제목·설명을 메모장 파일 하나로 정리한다.
+
+    폴더에 실제로 남은 클립을 기준으로 매번 다시 만들기 때문에, 나중에 업로드해서 지워진
+    클립은 목록에서 빠지고 이전 실행에서 남은 클립도 함께 보인다. 남은 클립이 없으면 메모를
+    지운다. 메모를 만들지 못해도 클립 작업에는 영향이 없다.
+    """
+    memo = output_dir / PENDING_MEMO_NAME
+    try:
+        clips = sorted(
+            (f for f in output_dir.glob("*.mp4") if not f.name.startswith("_temp")),
+            key=lambda f: f.stat().st_mtime,
+        )
+        if not clips:
+            memo.unlink(missing_ok=True)
+            return None
+
+        sep = "=" * 70
+        lines = [
+            f"업로드 대기 클립 {len(clips)}개",
+            "",
+            "자동 업로드가 되지 않은 클립입니다. YouTube Studio > 만들기 > 동영상 업로드로",
+            "올린 뒤, 아래 제목과 설명을 복사해서 붙여넣으세요.",
+            "직접 올린 클립은 mp4 파일을 지우면 다음 실행 때 이 목록에서 빠집니다.",
+            f"마지막 갱신: {time.strftime('%Y-%m-%d %H:%M')}",
+        ]
+        if reason_code:
+            lines.append(f"원인: {_REASON_TEXT.get(reason_code, reason_code)}")
+        for i, clip in enumerate(clips, 1):
+            title, desc = "(제목 정보 없음)", ""
+            meta = clip.with_suffix(".json")
+            if meta.exists():
+                try:
+                    data = json.loads(meta.read_text(encoding="utf-8"))
+                    title, desc = data.get("title") or title, data.get("description") or ""
+                except Exception:
+                    pass
+            lines += ["", sep, f"[{i}/{len(clips)}]  파일: {clip.name}", sep,
+                      "", "제목:", title, "", "설명:", desc]
+        text = "\n".join(lines) + "\n"
+        with open(memo, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            f.write(text)
+        return memo
+    except Exception as e:
+        print(f"    ⚠️  업로드 대기 목록 작성 실패: {e}")
+        return None
+
+
 def _save_clip_meta(out_file: Path, title: str, description: str) -> None:
     """클립 메타데이터를 mp4와 같은 경로에 JSON으로 저장."""
     meta_path = out_file.with_suffix(".json")
@@ -220,7 +278,10 @@ def _cut_and_upload_clips(
     print(f"\n📋  클립 처리 요약: 커팅 {n_cut}/{n} · 시작지점 추정 {n_estimated} · 업로드 실패 {len(pending_uploads)}")
     if n_cut > 0 and n_estimated == n_cut:
         print("🚨  모든 클립이 시작 지점 '추정'으로 잘렸습니다 — 역추적이 전부 실패했을 수 있습니다. 클립 구간을 확인하세요.")
+    memo = refresh_pending_memo(output_dir, getattr(uploader, "last_error", None))
     if pending_uploads:
         print("🚨  업로드 실패 영상 — highlights/ 폴더에서 수동으로 업로드하세요:")
         for name in pending_uploads:
             print(f"    {name}")
+    if memo:
+        print(f"📝  제목·설명 메모: highlights/{memo.name}")

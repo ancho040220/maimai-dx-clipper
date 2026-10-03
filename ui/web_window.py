@@ -104,6 +104,9 @@ def launch_gui():
             lines.append(f"· 영상 {len(existing_mp4)}개, 정보 파일 {len(existing_json)}개 (highlights/)")
         if existing_photos:
             lines.append(f"· 결과 사진 {len(existing_photos)}장 (result_frames/)")
+        pending_memo = highlights_dir / "업로드_대기_목록.txt"
+        if pending_memo.exists():
+            lines.append("· 업로드하지 못한 클립이 있습니다 — 지우면 되돌릴 수 없습니다 (업로드_대기_목록.txt 참고)")
         dlg = QMessageBox(win)
         dlg.setWindowTitle("이전 세션 파일 초기화")
         dlg.setText(
@@ -115,7 +118,7 @@ def launch_gui():
         dlg.setDefaultButton(QMessageBox.No)
         dlg.setModal(True)
         if dlg.exec_() == QMessageBox.Yes:
-            for f in existing_mp4 + existing_json + existing_photos:
+            for f in existing_mp4 + existing_json + existing_photos + [pending_memo]:
                 try:
                     f.unlink(missing_ok=True)
                 except OSError:

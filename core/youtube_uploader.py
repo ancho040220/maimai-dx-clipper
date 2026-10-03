@@ -55,6 +55,8 @@ class YouTubeUploader:
 
     def __init__(self):
         self._yt = None
+        self.last_error: Optional[str] = None   # 마지막 실패 사유 코드 (업로드 대기 목록에 적는다)
+        self.blocked:    Optional[str] = None   # 한도 초과면 이번 실행에서는 더 시도하지 않는다
 
     def authenticate(self):
         """OAuth 인증을 즉시 수행 (파이프라인 시작 전 사전 검증용)."""
@@ -117,6 +119,12 @@ class YouTubeUploader:
             self._authenticate()
 
         fname = video_path.name
+        if self.blocked:
+            # 한도 초과 상태에서 남은 클립을 계속 시도해 봐야 같은 오류만 반복된다
+            self.last_error = self.blocked
+            print(f"    ⏭️  업로드 한도 초과 상태 — 건너뜀 (파일은 highlights/ 에 보존됨)")
+            print(f"[HL_UPD] {json.dumps({'file': fname, 'status': 'failed', 'error': self.blocked}, ensure_ascii=False)}")
+            return None
         print(f"    📤  YouTube 업로드 중: {title}")
         print(f"[HL_UPD] {json.dumps({'file': fname, 'status': 'uploading', 'progress': 0}, ensure_ascii=False)}")
         body = {
@@ -137,6 +145,9 @@ class YouTubeUploader:
         _retriable_exc = (socket.timeout, ssl.SSLError, ConnectionError, OSError)
 
         def _fail(ecode: str, msg: str) -> None:
+            self.last_error = ecode
+            if ecode in ("quotaExceeded", "uploadLimitExceeded"):
+                self.blocked = ecode
             print(f"    ⚠️  {msg}")
             print(f"[HL_UPD] {json.dumps({'file': fname, 'status': 'failed', 'error': ecode}, ensure_ascii=False)}")
 

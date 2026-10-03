@@ -1899,6 +1899,7 @@ const ManualErrors2 = () => (
         <tr><td>"Sign in to confirm you're not a bot"</td><td>Firefox에서 YouTube 로그인 확인</td></tr>
         <tr><td>곡 정보가 표시되지 않음</td><td><strong>곡 정보 추출</strong> 토글 ON 확인</td></tr>
         <tr><td>YouTube 업로드 실패 / 인증 오류</td><td>환경 점검 패널의 <strong>🔑 재인증</strong> 클릭</td></tr>
+        <tr><td>업로드가 몇 개 올라가다 멈춤</td><td>멈춘 클립은 <ManualCode>highlights/업로드_대기_목록.txt</ManualCode>에서 제목·설명을 복사해 YouTube Studio에서 직접 올릴 수 있습니다</td></tr>
         <tr><td>Python을 찾을 수 없음</td><td>Python 재설치 (PATH 체크 확인)</td></tr>
       </tbody>
     </table>
