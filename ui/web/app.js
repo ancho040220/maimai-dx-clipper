@@ -258,9 +258,9 @@ function Toggle({ checked, onChange, label, desc, disabled }) {
   );
 }
 
-function UploadChip({ status }) {
+function UploadChip({ status, progress }) {
   if (status === "uploaded")  return <span className="chip success">{I.check}완료</span>;
-  if (status === "uploading") return <span className="chip accent">업로드 중</span>;
+  if (status === "uploading") return <span className="chip accent">업로드 중{progress > 0 ? " " + Math.round(progress * 100) + "%" : ""}</span>;
   if (status === "queued")    return <span className="chip">대기</span>;
   if (status === "failed")    return <span className="chip danger">실패</span>;
   return null;
@@ -389,7 +389,7 @@ function NavItem({ id, label, icon, badge, activeScreen, setScreen }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseInfo, appVersion }) {
+function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseInfo, appVersion, updateInfo, onOpenUpdate, pendingCount }) {
   const failedCount = highlights.filter(h => h.status === "failed").length;
   const dotCls = scanStatus === "running" ? "live" : scanStatus === "error" ? "err" : scanStatus === "done" ? "ok" : "idle";
   const statusLabel = scanStatus === "running" ? "스캔 중" : scanStatus === "error" ? "오류" : scanStatus === "done" ? "성공" : "대기";
@@ -425,6 +425,12 @@ function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseI
             <span style={{ fontSize: 11.5, color: "var(--muted)", letterSpacing: "0.06em" }}>RATING CLIPPER</span>
             {appVersion && <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>v{appVersion}</span>}
           </div>
+          {updateInfo && (
+            <button onClick={onOpenUpdate} className="chip accent" style={{ marginTop: 6, cursor: "pointer", border: 0, alignSelf: "flex-start" }}
+                    title={"현재 v" + updateInfo.current + " → 최신 v" + updateInfo.latest + " · 릴리스 페이지를 엽니다"}>
+              ⬆ 새 버전 v{updateInfo.latest}
+            </button>
+          )}
         </div>
       </div>
 
@@ -435,7 +441,7 @@ function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseI
         </div>
         <NavItem id="main"       label="메인"        icon={I.scan}  activeScreen={screen} setScreen={setScreen} />
         <NavItem id="scan"       label="스캔 결과"   icon={I.list}  badge={detections.length || null} activeScreen={screen} setScreen={setScreen} />
-        <NavItem id="highlights" label="하이라이트"  icon={I.film}  badge={failedCount || null}        activeScreen={screen} setScreen={setScreen} />
+        <NavItem id="highlights" label="하이라이트"  icon={I.film}  badge={(failedCount + (pendingCount || 0)) || null} activeScreen={screen} setScreen={setScreen} />
       </div>
 
       <div className="grow" />
@@ -1329,8 +1335,21 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
 
 // ── Highlights screen ─────────────────────────────────────────────────────────
 
-function ScreenHighlights({ bridge, highlights, setHighlights }) {
+function ScreenHighlights({ bridge, highlights, setHighlights, pending, setPending, busy }) {
   const failed = highlights.filter(h => h.status === "failed");
+  const pendingList = pending || [];
+  const pendingRunning = pendingList.some(p => p.status === "queued" || p.status === "uploading");
+  const pendingTotal   = pendingList.filter(p => p.status && p.status !== "failed").length;
+  const pendingDone    = pendingList.filter(p => p.status === "uploaded").length;
+  const pendingBlocked = pendingList.some(p => p.status === "failed" && (p.error === "quotaExceeded" || p.error === "uploadLimitExceeded"));
+
+  // 이전 실행에서 남은 클립을 업로더 하나로 차례대로 올린다 (한도에 걸리면 나머지는 시도하지 않는다)
+  function handleUploadPending() {
+    if (!bridge || busy || pendingRunning) return;
+    const files = pendingList.map(p => p.file);
+    setPending(prev => prev.map(p => files.includes(p.file) ? { ...p, status: "queued" } : p));
+    bridge.upload_pending(JSON.stringify(files));
+  }
 
   function handleRetry(file) {
     if (!bridge) return;
@@ -1380,6 +1399,46 @@ function ScreenHighlights({ bridge, highlights, setHighlights }) {
           )}
         </div>
       </div>
+
+      {pendingList.length > 0 && (
+        <div className="card card-pad">
+          <div className="row between gap-12" style={{ marginBottom: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>업로드 대기 {pendingList.length}개</div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                이전 실행에서 올리지 못한 클립입니다. 제목·설명은 <span className="mono">highlights/업로드_대기_목록.txt</span> 에도 있습니다.
+              </div>
+              {!pendingRunning && pendingBlocked && (
+                <div style={{ fontSize: 12, marginTop: 6, color: "var(--danger)" }}>
+                  업로드 한도에 도달해서 나머지는 건너뛰었습니다. 한도가 풀린 뒤에 다시 시도하세요.
+                </div>
+              )}
+            </div>
+            <button className={pendingRunning ? "btn" : "btn accent"} style={{ whiteSpace: "nowrap", flexShrink: 0 }} disabled={busy || pendingRunning} onClick={handleUploadPending}
+                    title={busy ? "분석이 끝난 뒤에 올릴 수 있습니다" : ""}>
+              {pendingRunning ? ("⏳ 업로드 중 " + pendingDone + "/" + pendingTotal) : (<>{I.retry}지금 올리기 ({pendingList.length})</>)}
+            </button>
+          </div>
+          <div className="col" style={{ gap: 6 }}>
+            {pendingList.map(p => (
+              <div key={p.file} className="col" style={{ gap: 4 }}>
+                <div className="row between gap-8" style={{ fontSize: 12.5 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }} title={p.title}>{p.title}</span>
+                  <span className="row gap-8" style={{ flexShrink: 0 }}>
+                    <span className="muted mono" style={{ fontSize: 11 }}>{p.time} · {p.size}MB</span>
+                    <UploadChip status={p.status} progress={p.progress} />
+                  </span>
+                </div>
+                {p.status === "uploading" && (
+                  <div style={{ height: 3, borderRadius: 2, background: "var(--surface-2)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: Math.round((p.progress || 0) * 100) + "%", background: "var(--accent)", transition: "width .3s" }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {highlights.length === 0 ? (
         <div className="card card-pad" style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
@@ -2017,6 +2076,8 @@ function App() {
   const [log,            setLog]            = useState([]);
   const [detections,     setDetections]     = useState([]);
   const [highlights,     setHighlights]     = useState([]);
+  const [pending,        setPending]        = useState([]);   // 이전 실행에서 남은 업로드 대기 클립
+  const [updateInfo,     setUpdateInfo]     = useState(null);  // 새 버전이 있을 때만 채워진다
   const [phaseInfo,      setPhaseInfo]      = useState(null);
   const [envCheckItems,  setEnvCheckItems]  = useState(ENV_CHECK_INITIAL);
   const [errorBanner,    setErrorBanner]    = useState(null);
@@ -2044,6 +2105,26 @@ function App() {
 
       if (b.get_version) b.get_version(v => setAppVersion(v));
 
+      // 업로드 대기 클립 — 시작할 때와 분석·업로드가 끝날 때마다 폴더에서 다시 읽는다.
+      // 실패 표시는 같은 파일이 다시 읽혀도 유지한다.
+      const reloadPending = () => {
+        if (!b.list_pending_uploads) return;
+        b.list_pending_uploads((json) => {
+          let list = [];
+          try { list = JSON.parse(json); } catch { return; }
+          setPending(prev => list.map(n => {
+            const old = prev.find(p => p.file === n.file);
+            return old && old.status === "failed" ? { ...n, status: "failed", error: old.error } : n;
+          }));
+        });
+      };
+      reloadPending();
+      if (b.pending_changed) b.pending_changed.connect(reloadPending);
+
+      // 새 버전 알림 — 조회에 실패하거나 최신이면 아무것도 오지 않는다
+      if (b.app_update_result) b.app_update_result.connect((json) => setUpdateInfo(JSON.parse(json)));
+      if (b.check_app_update) b.check_app_update();
+
       b.status_result.connect((json) => setVodInfo(JSON.parse(json)));
       b.status_error.connect((msg)  => setVodInfo({ error: msg }));
 
@@ -2061,22 +2142,25 @@ function App() {
       b.highlight_updated.connect((json) => {
         const upd = JSON.parse(json);
         setHighlights(prev => prev.map(h => h.file === upd.file ? { ...h, ...upd } : h));
+        setPending(prev => prev.map(p => p.file === upd.file ? { ...p, status: upd.status, progress: upd.progress, error: upd.error } : p));
       });
 
       b.phase_update.connect((json) => setPhaseInfo(JSON.parse(json)));
 
       b.scan_finished.connect(() => {
+        reloadPending();
         setScanStatus(prev => prev === "scan_done" ? prev : "done");
         setPhaseInfo(null);
         setScreen("scan");
       });
       b.scan_done.connect(() => { setScanStatus("scan_done"); setScreen("scan"); });
       b.pipeline_error.connect((msg) => {
+        reloadPending();
         setScanStatus("error");
         setPhaseInfo(null);
         setErrorBanner(prev => prev === msg ? prev : msg);
       });
-      b.pipeline_stopped.connect(() => { setScanStatus("idle"); setPhaseInfo(null); });
+      b.pipeline_stopped.connect(() => { reloadPending(); setScanStatus("idle"); setPhaseInfo(null); });
 
       b.env_check_result.connect((json) => setEnvCheckItems(JSON.parse(json)));
       b.run_env_check();
@@ -2163,6 +2247,9 @@ function App() {
         highlights={highlights}
         phaseInfo={phaseInfo}
         appVersion={appVersion}
+        updateInfo={updateInfo}
+        onOpenUpdate={() => bridge && updateInfo && bridge.open_release_page(updateInfo.url)}
+        pendingCount={pending.filter(p => !highlights.some(h => h.file === p.file)).length}
       />
       <main style={{ flex: 1, overflowY: "auto" }}>
         {screen === "main" && (
@@ -2205,6 +2292,9 @@ function App() {
           <ScreenHighlights
             bridge={bridge}
             highlights={highlights} setHighlights={setHighlights}
+            pending={pending.filter(p => !highlights.some(h => h.file === p.file))}
+            setPending={setPending}
+            busy={scanStatus === "running"}
           />
         )}
         {screen === "ocr_edit" && (
