@@ -24,12 +24,15 @@ _INDEX_PATH = CACHE_DIR / "jacket_index.npz"
 # 게임 화면상 자켓은 난이도 색 테두리에 둘러싸여 있어 크롭이 몇 px만 어긋나도
 # 테두리가 섞여 점수가 급락한다. 정렬이 맞을 때 점수가 뚜렷하게 최대가 되므로
 # 후보를 훑어 최고점을 취하는 방식으로 ROI를 자가 보정한다.
-_GRID = [
-    (159 + dy, 168 + dx, 72 + ds)
-    for dy in range(-6, 7, 2)
-    for dx in range(-6, 7, 2)
-    for ds in (-4, 0, 4)
-]
+# 기본 격자는 표준 화면용이고, 확장 격자는 방송 크롭이 어긋난 화면용이다(장식 링이 박스에 들어가면
+# 자켓이 가로로 몇 px, 크기로 최대 약 10% 달라진다). 세로 어긋남은 result_extractor 가 막대 위치로
+# 미리 바로잡으므로 y 는 ±6px 만 훑는다. 정렬이 맞을 때만 점수가 높아서 후보를 늘려도 오인식은 늘지 않았다.
+_GRID = sorted(
+    {(159 + dy, 168 + dx, 72 + ds)
+     for dy in range(-6, 7, 2) for dx in range(-6, 7, 2) for ds in (-4, 0, 4)}
+    | {(159 + dy, 168 + dx, 72 + ds)
+       for dy in range(-6, 7, 2) for dx in range(-12, 13, 3) for ds in range(-4, 17, 4)}
+)
 
 _cache: Optional[tuple[list[str], np.ndarray]] = None
 

@@ -362,6 +362,56 @@ def identify_song(
     return "", 0.0, "미인식"
 
 
+# ── 크롭 위치 보정 ──────────────────────────────────────────────────────────
+# 방송에 따라 YOLO 박스가 원 둘레의 장식 링까지 포함해서, 크롭 안의 게임 화면이 표준보다 위아래로
+# 밀리거나 크게 보인다. 곡명 영역·자켓·채보 알약은 고정 좌표라 몇 px만 어긋나도 곡을 못 읽는다.
+# 곡명 막대의 세로 위치는 정확하게(±1px) 구해지므로, 그만큼 이미지를 평행 이동해 표준 위치로 돌려놓는다.
+# (가로 위치와 배율은 자켓이 막대에 붙어 불안정해서 쓰지 않는다 — 자켓 격자가 흡수한다.)
+_BAR_REF   = (257, 194, 560, 39)          # 표준 곡명 막대(자켓 제외) x, y, 폭, 높이 — 구버전 결과 화면 13장 중앙값
+_BAR_SCALES = (0.92, 0.96, 1.0, 1.04, 1.08, 1.12)
+_SHIFT_MIN, _SHIFT_MAX = 4, 40            # 이 범위의 어긋남만 보정한다 (작으면 그대로, 크면 막대를 잘못 찾은 것)
+_SHIFT_MIN_SCORE = 0.85                   # 막대 모양이 이만큼 맞을 때만 믿는다
+
+
+def _bar_offset_y(img: np.ndarray) -> Optional[tuple]:
+    """곡명 막대의 세로 위치가 표준에서 벗어난 정도 (어긋남 px, 일치 점수). 막대를 못 찾으면 None.
+
+    남색 마스크를 만들어 막대 크기의 직사각형 템플릿을 여러 배율로 맞춘다.
+    """
+    h, s, v = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
+    m = ((h >= 100) & (h <= 130) & (s >= 100) & (v >= 40) & (v <= 190)).astype(np.uint8)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (41, 9)))
+    top, bot = 60, 360                     # 막대가 있을 법한 위쪽 띠만 탐색
+    m = m[top:bot].astype(np.float32)
+    best_score, best_y = -1.0, None
+    for sc in _BAR_SCALES:
+        w, hh = int(round(_BAR_REF[2] * sc)), int(round(_BAR_REF[3] * sc))
+        pad = max(4, hh // 5)
+        t = np.zeros((hh + 2 * pad, w + 2 * pad), np.float32)
+        t[pad:pad + hh, pad:pad + w] = 1.0
+        if t.shape[0] >= m.shape[0] or t.shape[1] >= m.shape[1]:
+            continue
+        _, score, _, loc = cv2.minMaxLoc(cv2.matchTemplate(m, t, cv2.TM_CCOEFF_NORMED))
+        if score > best_score:
+            best_score, best_y = score, loc[1] + pad + top
+    if best_y is None:
+        return None
+    return best_y - _BAR_REF[1], best_score
+
+
+def _shift_to_standard(img: np.ndarray) -> np.ndarray:
+    """곡명 막대의 세로 위치가 표준과 다르면 이미지를 평행 이동해 맞춘다. 표준 화면은 그대로 돌려준다."""
+    found = _bar_offset_y(img)
+    if found is None:
+        return img
+    oy, score = found
+    if score < _SHIFT_MIN_SCORE or not (_SHIFT_MIN <= abs(oy) <= _SHIFT_MAX):
+        return img
+    M = np.float32([[1, 0, 0], [0, 1, -oy]])
+    return cv2.warpAffine(img, M, (img.shape[1], img.shape[0]),
+                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
 def extract_from_frames(
     frames_1000: list[np.ndarray],
     titles:      list[str],
@@ -376,6 +426,7 @@ def extract_from_frames(
 
     # find_song_bar를 게이트로 사용하지 않음 — 전체 프레임 선명도로 최적 프레임 선택
     best_frame = max(frames_1000, key=_sharpness)
+    best_frame = _shift_to_standard(best_frame)   # 어긋난 방송 크롭을 표준 위치로
 
     # bar 위치 (detect_difficulty 용; 실패 시 고정 fallback)
     bar = find_song_bar(best_frame)
