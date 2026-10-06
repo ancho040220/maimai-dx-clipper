@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 
 from core.gpu import has_nvidia, onnx_providers, vram_gb
+from core.result_screen import is_result_screen
 from config.settings import (
     PROJECT_DIR,
     RATING_MIN, RATING_MAX, MAX_RATING_CHANGE, MIN_GAP,
@@ -491,6 +492,9 @@ def _worker(args: dict) -> dict:
     initial_rating = args.get("initial_rating")
     progress_queue = args.get("progress_queue")
     result_queue   = args.get("result_queue")
+    detect_mode    = args.get("detect_mode", "rating")        # "rating": 레이팅 상승 / "results": 결과 화면
+    frames_dir     = Path(args["frames_dir"]) if args.get("frames_dir") else None
+    by_results     = detect_mode == "results"
 
     def _ping():
         if progress_queue is not None:
@@ -500,7 +504,7 @@ def _worker(args: dict) -> dict:
                 pass
 
     _ping()                      # 프로세스 시작 — watchdog 오발동 방지
-    tess       = _init_tess()
+    tess       = None if by_results else _init_tess()
     _ping()                      # Tesseract 완료
     yolo_model = _init_yolo("cuda")
     _ping()                      # YOLO 완료
@@ -508,7 +512,7 @@ def _worker(args: dict) -> dict:
     cap, actual_start, fps = _open_and_seek(video_path, start_sec, scan_floor, worker_id)
     if cap is None:
         print(f"  [W{worker_id}] 영상 열기 실패 — 건너뜀")
-        result = {"worker_id": worker_id, "readings": [], "frames_checked": 0}
+        result = {"worker_id": worker_id, "readings": [], "result_hits": [], "frames_checked": 0}
         if result_queue is not None:
             result_queue.put(result)
         return result
@@ -524,6 +528,9 @@ def _worker(args: dict) -> dict:
     seg_duration    = _end - actual_start
     last_report_pct = -1.0
     readings: list                              = []
+    result_hits: list                           = []   # [(ts, 크롭 파일)] — 결과 화면으로 판정된 프레임
+    dense_step                                  = max(1, int(fps * RESULT_DENSE_STEP))
+    dense_until                                 = -1   # 이 프레임 번호까지는 촘촘히 읽는다 (결과 화면이 잡힌 직후)
     batch: list                                 = []   # [(ts, 전처리 이미지 or None)]
     pending_rating: Optional[Tuple[float, int]] = None
     last_result_time                            = actual_start - MIN_GAP - 1
@@ -601,11 +608,16 @@ def _worker(args: dict) -> dict:
             frame_num = int(reconnect_sec * fps)
             continue
         _reconnect_count = 0
-        if (frame_num - start_frame) % step == 0:
+        regular = (frame_num - start_frame) % step == 0
+        # 결과 화면은 2~3초밖에 안 뜨고 숫자가 안정되는 구간은 그중 맨 끝 1초 남짓이라, 1초 간격 샘플은 그 창을
+        # 놓치거나 전환 중 흐린 프레임만 잡는다. 한 번 잡히면 이어지는 구간은 0.2초 간격으로 읽는다.
+        dense = by_results and not regular and frame_num <= dense_until and (frame_num - start_frame) % dense_step == 0
+        if regular or dense:
             ret2, frame = cap.retrieve()
             if ret2:
                 current_sec    = frame_num / fps
-                frames_checked += 1
+                if regular:
+                    frames_checked += 1
 
                 pct = (current_sec - actual_start) / seg_duration * 100 if seg_duration > 0 else 0
                 if pct - last_report_pct >= 1.0:
@@ -613,9 +625,19 @@ def _worker(args: dict) -> dict:
                     last_report_pct = pct
 
                 crop = _detect_game_crop(yolo_model, frame)
-                batch.append((current_sec, _rating_roi(crop) if crop is not None else None))
-                if len(batch) >= RATING_OCR_BATCH:
-                    _flush_batch()
+                if by_results:
+                    # 결과 화면이면 크롭을 저장해 둔다 — 곡·신기록 판독이 영상을 다시 받지 않고 쓴다
+                    if crop is not None and is_result_screen(crop):
+                        hit = None
+                        if frames_dir is not None:
+                            hit = frames_dir / f"r_{int(current_sec * 1000):09d}.jpg"
+                            cv2.imwrite(str(hit), crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                        result_hits.append((current_sec, str(hit) if hit else None))
+                        dense_until = frame_num + int(fps * RESULT_DENSE_TAIL)   # 마지막으로 잡힌 뒤로도 잠시 더
+                else:
+                    batch.append((current_sec, _rating_roi(crop) if crop is not None else None))
+                    if len(batch) >= RATING_OCR_BATCH:
+                        _flush_batch()
 
         frame_num += 1
 
@@ -627,7 +649,8 @@ def _worker(args: dict) -> dict:
 
     _report_progress(100.0, done=True)
 
-    result = {"worker_id": worker_id, "readings": readings, "frames_checked": frames_checked}
+    result = {"worker_id": worker_id, "readings": readings, "result_hits": result_hits,
+              "frames_checked": frames_checked}
     if result_queue is not None:
         result_queue.put(result)
     return result
@@ -688,6 +711,36 @@ def merge_and_detect(
     return history, total_frames
 
 
+_RESULT_GAP = 5.0   # 결과 화면 프레임 사이가 이보다 벌어지면 다른 판 (결과 화면은 2~8초 지속, 다음 판은 훨씬 뒤)
+
+
+def merge_result_plays(all_results: list, video_url: str) -> Tuple[list, int]:
+    """워커들이 모은 결과 화면 프레임을 판 단위로 묶는다. 구간이 겹친 곳의 중복 프레임은 합친다."""
+    total_frames = sum(r["frames_checked"] for r in all_results)
+    hits = sorted((h for r in all_results for h in r.get("result_hits", [])), key=lambda x: x[0])
+
+    plays: list = []
+    seen: set = set()
+    for ts, path in hits:
+        key = round(ts, 2)
+        if key in seen:                               # 구간이 겹친 곳에서 같은 프레임이 두 번 들어온 경우
+            continue
+        seen.add(key)
+        if plays and ts - plays[-1]["_last"] <= _RESULT_GAP:
+            plays[-1]["result_frames"].append(path)
+            plays[-1]["_last"] = ts
+        else:
+            plays.append({"_last": ts, "timestamp": ts, "result_frames": [path]})
+
+    history: list = []
+    for p in plays:
+        p.pop("_last")
+        p["yt_url"]        = yt_timestamp_url(video_url, p["timestamp"])
+        p["result_frames"] = [f for f in p["result_frames"] if f]
+        history.append(p)
+    return history, total_frames
+
+
 # ── 워커 수 자동 결정 ─────────────────────────────────────────────────────────
 
 def _auto_workers() -> int:
@@ -728,6 +781,10 @@ def _auto_workers() -> int:
 # _seek_verified tol_sec(30s)만큼 앞당겨 세그먼트 경계 blind spot 방지
 _SEG_OVERLAP = 30.0
 
+# 신기록 분석 모드: 결과 화면이 잡히면 그 뒤 RESULT_DENSE_TAIL초 동안(계속 잡히면 연장) RESULT_DENSE_STEP초 간격으로 읽는다
+RESULT_DENSE_STEP = 0.2
+RESULT_DENSE_TAIL = 2.0
+
 
 def scan_parallel(
     video_url: str,
@@ -738,8 +795,19 @@ def scan_parallel(
     num_workers: int,
     output_file: Optional[str] = None,
     cancel_event=None,
+    detect_mode: str = "rating",
+    frames_dir: Optional[Path] = None,
 ) -> list:
-    print(f"📍  YOLO → 1000×1000 → OCR ROI {GAME_ROI}\n")
+    """detect_mode: "rating" 레이팅 상승 감지 / "results" 결과 화면 탐지(레이팅이 안 올라도 모든 판)."""
+    by_results = detect_mode == "results"
+    if by_results:
+        print("📍  YOLO → 1000×1000 → 결과 화면 곡명 막대 탐지\n")
+        if frames_dir is not None:
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for old in frames_dir.glob("r_*.jpg"):       # 이전 스캔의 크롭이 섞이지 않게 비운다
+                old.unlink(missing_ok=True)
+    else:
+        print(f"📍  YOLO → 1000×1000 → OCR ROI {GAME_ROI}\n")
 
     if num_workers <= 0:
         num_workers = _auto_workers()
@@ -768,7 +836,8 @@ def scan_parallel(
     worker_args = [
         {"worker_id": i, "video_path": video_path, "start_sec": s, "end_sec": e,
          "initial_rating": initial_rating, "progress_queue": progress_queue,
-         "result_queue": result_queue, "scan_floor": start_sec}
+         "result_queue": result_queue, "scan_floor": start_sec,
+         "detect_mode": detect_mode, "frames_dir": str(frames_dir) if frames_dir else None}
         for i, (s, e) in enumerate(segments)
     ]
 
@@ -838,6 +907,12 @@ def scan_parallel(
     raw_results = sorted(raw_results, key=lambda x: x["worker_id"])
 
     print("📊  병합 중...\n")
+    if by_results:
+        history, total_checked = merge_result_plays(raw_results, video_url)
+        m, s = divmod(int(time.time() - scan_start), 60)
+        print(f"\n📈  완료: {total_checked:,}프레임 스캔 | 결과 화면 {len(history)}판 | 소요 {m}분 {s}초")
+        return history
+
     history, total_checked = merge_and_detect(raw_results, initial_rating, video_url)
 
     m, s = divmod(int(time.time() - scan_start), 60)

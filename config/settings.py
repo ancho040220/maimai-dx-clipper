@@ -106,7 +106,7 @@ TIMEOUT_WORKER_WATCHDOG   = 600   # 워커 watchdog 기준
 
 # ── 사용자 설정 ────────────────────────────────────────────────────────────────
 USER_CONFIG_PATH     = PROJECT_DIR / "config" / "user_config.json"
-_DEFAULT_USER_CONFIG = {"clipSelect": True, "ocrEdit": True, "autoUpload": True, "songOcr": True}
+_DEFAULT_USER_CONFIG = {"clipSelect": True, "ocrEdit": True, "autoUpload": True, "songOcr": True, "recordMode": False}
 
 
 def load_user_config() -> dict:
