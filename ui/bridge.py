@@ -41,6 +41,49 @@ _LVL_WARN = ["⚠️", "WARNING", "타임아웃", "끊김", "재연결"]
 _LVL_ERR  = ["❌", "🚨", "오류", "실패", "ERROR"]
 _LVL_HL   = ["🎯", "레이팅 변동"]
 
+_RE_DATE_PREFIX = re.compile(r"^\d{8}_(?:\d{4}|\d{2})_")
+
+
+def _read_clip_meta(clip: Path) -> tuple:
+    """클립 옆 json 에서 (제목, 설명). 없으면 파일명으로 대신한다."""
+    try:
+        data  = json.loads(clip.with_suffix(".json").read_text(encoding="utf-8"))
+        title = data.get("title", "")
+        if title:
+            return title, data.get("description", "")
+    except Exception:
+        pass
+    title = _RE_DATE_PREFIX.sub("", clip.stem)[:100] or "[maimai DX]"
+    return title, f"재업로드: {clip.name}"
+
+
+def _remove_clip(clip: Path) -> None:
+    """업로드가 끝난 클립과 메타를 지운다 (메인 흐름과 같은 동작)."""
+    for f in (clip, clip.with_suffix(".json")):
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _pending_clips(folder: Path) -> list:
+    """highlights/ 에 남은(업로드 안 된) 클립 목록. 오래된 것부터."""
+    out = []
+    try:
+        clips = sorted((f for f in folder.glob("*.mp4") if not f.name.startswith("_temp")),
+                       key=lambda f: f.stat().st_mtime)
+        for f in clips:
+            st = f.stat()
+            out.append({
+                "file":  f.name,
+                "title": _read_clip_meta(f)[0],
+                "size":  round(st.st_size / 1024 / 1024, 1),
+                "time":  datetime.fromtimestamp(st.st_mtime).strftime("%m-%d %H:%M"),
+            })
+    except Exception:
+        pass
+    return out
+
 
 def _detect_level(text: str) -> str:
     if any(k in text for k in _LVL_OK):   return "ok"
@@ -66,6 +109,8 @@ class Bridge(QObject):
     pipeline_stopped  = pyqtSignal()
     env_check_result  = pyqtSignal(str)   # JSON list[dict]
     ocr_ready         = pyqtSignal(str)   # JSON list[OcrItem] — OCR 편집 화면 표시 요청
+    app_update_result = pyqtSignal(str)   # JSON {current, latest, url, newer}
+    pending_changed   = pyqtSignal()      # 업로드 대기 클립 목록이 바뀜 — JS 가 다시 읽는다
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -245,38 +290,59 @@ class Bridge(QObject):
         uploader = YouTubeUploader()
 
         def _do_retry():
-            meta_path = file_path.with_suffix(".json")
-            if meta_path.exists():
-                try:
-                    meta  = json.loads(meta_path.read_text(encoding="utf-8"))
-                    title = meta.get("title", "")
-                    desc  = meta.get("description", "")
-                except Exception:
-                    title = ""
-                    desc  = ""
-            else:
-                title = ""
-                desc  = ""
-
-            if not title:
-                parts  = file_path.stem.split("_")
-                rating = parts[-1] if parts else "?"
-                title  = f"[maimai DX] Rating Up! {rating}"
-                desc   = f"재업로드: {file_name}"
-
-            video_id = uploader.upload(file_path, title, desc)
-            if video_id:
-                try:
-                    meta_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            title, desc = _read_clip_meta(file_path)
+            if uploader.upload(file_path, title, desc):
+                _remove_clip(file_path)
             # 목록은 폴더에 남은 클립 기준이라, 업로드가 끝났든 실패했든 다시 만든다
             from core.clip_builder import refresh_pending_memo
             refresh_pending_memo(file_path.parent, getattr(uploader, "last_error", None))
+            self.pending_changed.emit()
 
         self._retry_workers = [w for w in self._retry_workers if w.isRunning()]
         worker = PipelineWorker(_do_retry)
         worker.log.connect(self._on_log)
+        self._retry_workers.append(worker)
+        worker.start()
+
+    @pyqtSlot(result=str)
+    def list_pending_uploads(self) -> str:
+        """이전 실행에서 업로드하지 못하고 highlights/ 에 남은 클립 (JSON 배열)."""
+        return json.dumps(_pending_clips(PROJECT_DIR / "highlights"), ensure_ascii=False)
+
+    @pyqtSlot(str)
+    def upload_pending(self, files_json: str):
+        """남은 클립을 업로더 하나로 차례대로 올린다. 한도에 걸리면 나머지는 시도 없이 실패로 둔다."""
+        if self._worker and self._worker.isRunning():
+            self._emit_log("warn", "⚠️ 분석이 진행 중입니다. 끝난 뒤에 업로드하세요.")
+            return
+        try:
+            names = [n for n in json.loads(files_json) if isinstance(n, str)]
+        except Exception:
+            return
+        if not names:
+            return
+
+        from core.youtube_uploader import YouTubeUploader
+        folder = PROJECT_DIR / "highlights"
+
+        def _run():
+            uploader = YouTubeUploader()
+            try:
+                for name in names:
+                    clip = folder / Path(name).name          # 폴더 밖 경로는 쓰지 않는다
+                    if clip.suffix.lower() != ".mp4" or not clip.exists():
+                        continue
+                    title, desc = _read_clip_meta(clip)
+                    if uploader.upload(clip, title, desc):
+                        _remove_clip(clip)
+            finally:
+                from core.clip_builder import refresh_pending_memo
+                refresh_pending_memo(folder, getattr(uploader, "last_error", None))
+                self.pending_changed.emit()
+
+        worker = PipelineWorker(_run)
+        worker.log.connect(self._on_log)
+        self._retry_workers = [w for w in self._retry_workers if w.isRunning()]
         self._retry_workers.append(worker)
         worker.start()
 
@@ -529,6 +595,27 @@ class Bridge(QObject):
         w = PipelineWorker(_run)
         w.start()
         self._retry_workers.append(w)
+
+    @pyqtSlot()
+    def check_app_update(self):
+        """GitHub 최신 릴리스를 조회해 새 버전이 있으면 알린다. 실패하면 아무 일도 없다."""
+        def _run():
+            from core.app_update import check_latest
+            info = check_latest()
+            if info and info.get("newer"):
+                self.app_update_result.emit(json.dumps(info, ensure_ascii=False))
+
+        w = PipelineWorker(_run)
+        w.start()
+        self._retry_workers.append(w)
+
+    @pyqtSlot(str)
+    def open_release_page(self, url: str):
+        """릴리스 페이지를 기본 브라우저로 연다. 이 저장소 주소만 연다."""
+        from core.app_update import is_release_url
+        if is_release_url(url):
+            import webbrowser
+            webbrowser.open(url)
 
     @pyqtSlot(result=str)
     def get_version(self) -> str:
