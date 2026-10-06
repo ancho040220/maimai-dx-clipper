@@ -122,8 +122,25 @@ def _letterbox(im: np.ndarray, size: int = 640):
     return im, r, left, top
 
 
-def _detect_game_crop(session, frame: np.ndarray) -> Optional[np.ndarray]:
-    """게임 화면을 감지해 1000×1000 크롭 반환. 미감지 시 None."""
+# 학습 라벨이 전부 정사각형이라, 이보다 세로로 긴 박스는 모델이 틀린 것이다.
+# 파스텔 배경 위의 밝은 원(신버전 방송)에서 박스 윗변이 화면 밖까지 늘어나는 오류가 확인됐다.
+_TALL_BOX_RATIO = 1.05
+
+
+def _fix_tall_box(x1: float, y1: float, x2: float, y2: float) -> tuple:
+    """세로로 긴 박스를 정사각형으로 바로잡는다 (아래쪽 가장자리를 두고 높이를 폭에 맞춘다).
+
+    틀어진 박스에서도 좌우 폭과 아래쪽 가장자리는 정확했다. 화면 밖으로 나간 값은 잘라내기 전의
+    좌표로 판단해야 한다 — 잘라낸 뒤에는 높이가 줄어서 기준을 넘지 못한다.
+    """
+    w, h = x2 - x1, y2 - y1
+    if w > 0 and h > w * _TALL_BOX_RATIO:
+        y1 = y2 - w
+    return x1, y1, x2, y2
+
+
+def _game_box(session, frame: np.ndarray) -> Optional[tuple]:
+    """게임 화면 박스 (x1, y1, x2, y2). 미감지 시 None."""
     img, ratio, dx, dy = _letterbox(frame)
     blob = np.ascontiguousarray(
         img[:, :, ::-1].transpose(2, 0, 1)[None], dtype=np.float32) / 255.0
@@ -141,10 +158,19 @@ def _detect_game_crop(session, frame: np.ndarray) -> Optional[np.ndarray]:
     pred, scores = pred[keep], scores[keep]
 
     cx, cy, bw, bh = pred[int(scores.argmax()), :4]
-    x1 = int(max(0, (cx - bw / 2 - dx) / ratio))
-    y1 = int(max(0, (cy - bh / 2 - dy) / ratio))
-    x2 = int(min(frame.shape[1], (cx + bw / 2 - dx) / ratio))
-    y2 = int(min(frame.shape[0], (cy + bh / 2 - dy) / ratio))
+    x1, y1, x2, y2 = _fix_tall_box(
+        (cx - bw / 2 - dx) / ratio, (cy - bh / 2 - dy) / ratio,
+        (cx + bw / 2 - dx) / ratio, (cy + bh / 2 - dy) / ratio)
+    return (int(max(0, x1)), int(max(0, y1)),
+            int(min(frame.shape[1], x2)), int(min(frame.shape[0], y2)))
+
+
+def _detect_game_crop(session, frame: np.ndarray) -> Optional[np.ndarray]:
+    """게임 화면을 감지해 1000×1000 크롭 반환. 미감지 시 None."""
+    box = _game_box(session, frame)
+    if box is None:
+        return None
+    x1, y1, x2, y2 = box
     crop = frame[y1:y2, x1:x2]
     if crop.size == 0:
         return None
