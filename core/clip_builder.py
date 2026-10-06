@@ -63,6 +63,32 @@ def _date_line(entry: dict) -> str:
     return f"플레이 일시: {dt.strftime(fmt)}\n"
 
 
+def _result_tail(entry: dict) -> str:
+    """제목 끝의 결과 표기. 레이팅이 오른 판은 레이팅, 신기록 분석 모드는 신기록 개선폭."""
+    if entry.get("current_rating") is not None:
+        return f" | {entry['current_rating']} (+{entry['change']})"
+    if entry.get("first_play"):
+        return " | 첫 기록"
+    if entry.get("new_record") and entry.get("record_delta") is not None:
+        return f" | 신기록 +{entry['record_delta']:.4f}%"
+    return ""
+
+
+def _result_line(entry: dict) -> str:
+    """설명란의 결과 줄(줄바꿈 포함). 알 수 없으면 빈 문자열."""
+    if entry.get("current_rating") is not None:
+        return (f"레이팅: {entry.get('previous_rating', '?')} → "
+                f"{entry['current_rating']} (+{entry['change']})\n")
+    if entry.get("first_play") and entry.get("achievement") is not None:
+        return f"첫 기록: {entry['achievement']:.4f}% (이 채보를 처음 플레이)\n"
+    if entry.get("new_record") and entry.get("record_delta") is not None and entry.get("my_best") is not None:
+        ach = entry.get("achievement")
+        now = f"{ach:.4f}%" if ach is not None else "?"
+        note = "" if entry.get("record_exact") is not False else " ※ 달성률과 MY BEST의 차이로 계산한 값"
+        return f"신기록: MY BEST {entry['my_best']:.4f}% → {now} (+{entry['record_delta']:.4f}%){note}\n"
+    return ""
+
+
 def clip_filename(entry: dict, title: str, index: int) -> str:
     """파일명: 플레이 날짜가 앞에 붙는다(정렬이 곧 시간순). 날짜를 모르면 기존처럼 뒤에 현재 시각."""
     dt = play_datetime(entry)
@@ -88,7 +114,7 @@ def build_clip_metadata(entry: dict) -> Tuple[str, str]:
         tail = f" {entry.get('difficulty', '')} Lv.{const_str} {ach_str} {entry.get('rank', '')}"
         if badge_str:
             tail += f" {badge_str}"
-        tail += f" | {entry['current_rating']} (+{entry['change']})"
+        tail += _result_tail(entry)
         title = _fit_title(f"{_title_tag(entry)} ", entry["song_title"], tail)
 
         desc_ach_str = f"{ach:.4f}%" if ach is not None else "-"
@@ -101,8 +127,19 @@ def build_clip_metadata(entry: dict) -> Tuple[str, str]:
         if badge_str:
             description += f"\n판정: {badge_str}"
         description += (
-            f"\n\n{_date_line(entry)}레이팅: {entry.get('previous_rating', '?')} → "
-            f"{entry['current_rating']} (+{entry['change']})\n"
+            f"\n\n{_date_line(entry)}{_result_line(entry)}"
+            f"플레이 시작: {entry.get('play_url', '')}\n"
+            f"결과 시점: {entry.get('yt_url', '')}"
+        )
+    elif entry.get("current_rating") is None:
+        # 신기록 분석 모드에서 곡명을 못 읽은 판 — 곡 정보 없이 신기록만 알린다
+        delta = entry.get("record_delta")
+        if entry.get("first_play"):
+            title = f"{_title_tag(entry)} 첫 기록"
+        else:
+            title = f"{_title_tag(entry)} 신기록" + (f" +{delta:.4f}%" if entry.get("new_record") and delta is not None else "")
+        description = (
+            f"{_date_line(entry)}{_result_line(entry)}"
             f"플레이 시작: {entry.get('play_url', '')}\n"
             f"결과 시점: {entry.get('yt_url', '')}"
         )
@@ -212,11 +249,19 @@ def _cut_and_upload_clips(
             print("  🛑  중단 요청 — 남은 클립 커팅/업로드를 중단합니다.")
             break
         result_ts  = entry["timestamp"]
-        change     = entry.get("change", 0)
-        new_rating = entry["current_rating"]
+        if entry.get("current_rating") is not None:
+            change = entry.get("change", 0)
+            label  = f"{entry['current_rating']} (+{change})"
+        else:                                     # 신기록 분석 모드 — 레이팅 대신 개선폭
+            delta  = entry.get("record_delta")
+            if entry.get("first_play"):
+                change, label = "첫 기록", "첫 기록"
+            else:
+                change = f"{delta:.4f}%" if delta is not None else "-"
+                label  = f"신기록 +{change}" if entry.get("new_record") else "신기록 여부 미확인"
         temp_file  = output_dir / f"_temp_{i}.mp4"
 
-        print(f"\n  [{i+1}/{n}] {new_rating} (+{change}) @ {fmt_time(result_ts)}")
+        print(f"\n  [{i+1}/{n}] {label} @ {fmt_time(result_ts)}")
 
         start_dl = start_dl_map.get(i)
         if start_dl is None or not temp_file.exists():

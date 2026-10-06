@@ -171,6 +171,7 @@ class Bridge(QObject):
         buffer_min  = int(cfg.get("buffer", 6))
         self._auto_upload = auto_upload
         song_ocr    = cfg.get("songOcr", True)
+        record_mode = bool(cfg.get("recordMode", False)) and not is_live   # 신기록 분석 모드는 VOD 전용
 
         from config.settings import CACHE_DIR
         CACHE_DIR.mkdir(exist_ok=True)
@@ -240,9 +241,11 @@ class Bridge(QObject):
                     url=url, start_sec=start_sec or 0.0, end_sec=end_sec,
                     initial_rating=rating, num_workers=n_workers,
                     output_file=None, cancel_event=self._cancel_event,
+                    record_mode=record_mode, output_dir=output_dir,
                 )
                 if not history:
-                    print("ℹ️  감지된 레이팅 변동 없음 — 클립 추출 단계를 건너뜁니다.")
+                    print("ℹ️  감지된 신기록 없음 — 클립 추출 단계를 건너뜁니다." if record_mode
+                          else "ℹ️  감지된 레이팅 변동 없음 — 클립 추출 단계를 건너뜁니다.")
                     return
                 self._last_history = history
                 self._last_url     = url

@@ -478,13 +478,52 @@ function Sidebar({ screen, setScreen, scanStatus, detections, highlights, phaseI
   );
 }
 
+// ── 분석 모드 선택 ────────────────────────────────────────────────────────────
+const ANALYSIS_MODES = [
+  { id: "rating", label: "레이팅 상승", hint: "레이팅이 오른 판을 클립으로 만듭니다 · VOD / 라이브 · 시작 레이팅 필요" },
+  { id: "record", label: "신기록",     hint: "결과 화면에서 MY BEST를 갱신한 판(첫 기록 포함)을 클립으로 만듭니다 · VOD 전용 · 시작 레이팅 불필요",
+    warn: "인게임 화면이 작을수록 분석 능력이 떨어져 달성률·개선폭이 부정확할 수 있습니다." },
+];
+
+function ModeSelect({ value, onChange, disabled, isLive }) {
+  const cur = ANALYSIS_MODES.find(m => m.id === value) || ANALYSIS_MODES[0];
+  return (
+    <div className="col gap-6">
+      <div className="row gap-12" style={{ alignItems: "center" }}>
+        <div role="radiogroup" aria-label="분석 모드" style={{
+          display: "inline-flex", padding: 2, gap: 1, background: "var(--surface-2)",
+          border: "1px solid var(--border)", borderRadius: "var(--r-md)",
+        }}>
+          {ANALYSIS_MODES.map(m => {
+            const on  = value === m.id;
+            const off = disabled || (m.id === "record" && isLive);
+            return (
+              <button key={m.id} role="radio" aria-checked={on} disabled={off} onClick={() => onChange(m.id)}
+                style={{
+                  padding: "4px 11px", border: "none", borderRadius: "calc(var(--r-md) - 2px)",
+                  fontSize: 12, fontWeight: 700, cursor: off ? "default" : "pointer", whiteSpace: "nowrap",
+                  background: on ? "var(--accent)" : "transparent",
+                  color: on ? "var(--accent-fg)" : "var(--text)", opacity: off && !on ? 0.4 : 1,
+                }}>{m.label}</button>
+            );
+          })}
+        </div>
+        {isLive && <span className="chip warning" style={{ fontSize: 11 }}>라이브는 레이팅 상승 모드만 지원합니다</span>}
+      </div>
+      <div className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>{cur.hint}</div>
+      {cur.warn && <div style={{ fontSize: 11, lineHeight: 1.5, color: "var(--warning)", fontWeight: 600 }}>⚠ {cur.warn}</div>}
+    </div>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, log, setLog,
                       detections, setDetections, highlights, setHighlights,
                       phaseInfo, setPhaseInfo, envCheckItems, onRecheck, errorBanner, setErrorBanner,
                       clipSelect, setClipSelect, ocrEdit, setOcrEdit,
-                      autoUpload, setAutoUpload, songOcr, setSongOcr }) {
+                      autoUpload, setAutoUpload, songOcr, setSongOcr,
+                      recordMode, setRecordMode }) {
   const [url, setUrl]               = useState("");
   const [startRating, setStartRating] = useState("");
   const [liveConfirm, setLiveConfirm] = useState(null);   // 라이브 시작 전 레이팅 확인
@@ -526,6 +565,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
   function handleStart() {
     if (!bridge) return;
     if (envBlocked) return;
+    const useRecordMode = recordMode && !(vodInfo && vodInfo.is_live);   // 라이브는 아직 지원하지 않는다
     if (!vodInfo || vodInfo.error) {
       setUrlErr("URL 확인을 먼저 해주세요.");
       setTimeout(() => setUrlErr(""), 3000);
@@ -542,9 +582,11 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
 
     let hasError = false;
 
-    // Rating validation
+    // Rating validation (신기록 분석 모드는 레이팅 숫자를 읽지 않으므로 시작 레이팅이 필요 없다)
     const rating = parseInt(startRating, 10);
-    if (!startRating || isNaN(rating) || rating < RATING_MIN || rating > RATING_MAX) {
+    if (useRecordMode) {
+      setRatingError("");
+    } else if (!startRating || isNaN(rating) || rating < RATING_MIN || rating > RATING_MAX) {
       setRatingError(`${RATING_MIN}~${RATING_MAX} 범위의 숫자를 입력하세요.`);
       hasError = true;
     } else {
@@ -594,17 +636,18 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
 
     const payload = {
       url,
-      startRating: rating,
+      startRating: isNaN(rating) ? 0 : rating,
       tStart, tEnd, autoUpload,
       workers: parseInt(workers, 10) || 0,
       isLive: vodInfo.is_live,
       buffer: 6,
       songOcr,
+      recordMode: useRecordMode,
     };
 
     // 라이브는 시작 레이팅이 실제 값과 다르면 아무것도 감지되지 않은 채 끝난다.
     // 되돌릴 방법이 없으므로 시작 전에 한 번 확인받는다.
-    if (vodInfo.is_live) { setLiveConfirm(payload); return; }
+    if (vodInfo.is_live) { setLiveConfirm(payload); return; }   // (신기록 분석 모드는 라이브에서 꺼진다)
     launchPipeline(payload);
   }
 
@@ -632,7 +675,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
            && item.status !== "ok" && item.status !== "loading"
   );
   const canStart = !running && !scanDone && !!vodInfo && !vodInfo.error
-    && vodInfo.owned === true && !!startRating.trim() && !envBlocked;
+    && vodInfo.owned === true && (!!startRating.trim() || (recordMode && !vodInfo.is_live)) && !envBlocked;
 
   const uploaded  = highlights.filter(h => h.status === "uploaded").length;
   const failedUpl = highlights.filter(h => h.status === "failed").length;
@@ -814,12 +857,21 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
 
         <hr className="hr" style={{ margin: "6px 0" }} />
 
+        {/* 분석 모드 — 아래 입력칸(시작 레이팅 등)을 바꾸는 선택이라 입력 폼보다 위에 둔다 */}
+        <div style={{ marginBottom: 8 }}>
+          <FormField label="분석 모드">
+            <ModeSelect value={recordMode && !vodInfo?.is_live ? "record" : "rating"}
+              onChange={m => { setRecordMode(m === "record"); setRatingError(""); }} disabled={running} isLive={!!vodInfo?.is_live} />
+          </FormField>
+        </div>
+
         {/* Input form */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
           <FormField label="시작 레이팅">
-            <input className="input num" value={startRating}
+            <input className="input num" value={recordMode && !vodInfo?.is_live ? "" : startRating}
               onChange={e => { setStartRating(e.target.value); setRatingError(""); }}
-              placeholder={`예: 15000 (${RATING_MIN}~${RATING_MAX})`} disabled={running}
+              placeholder={recordMode && !vodInfo?.is_live ? "신기록 모드에서는 입력하지 않습니다" : `예: 15000 (${RATING_MIN}~${RATING_MAX})`}
+              disabled={running || (recordMode && !vodInfo?.is_live)}
               style={ratingError ? { borderColor: "var(--danger)" } : {}} />
             <FieldError msg={ratingError} />
           </FormField>
@@ -937,17 +989,21 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
   const [suggestions,   setSuggestions]   = useState([]);
   const [showSug,       setShowSug]       = useState(false);
   const [hovIdx,        setHovIdx]        = useState(-1);
+  // 자동완성은 사용자가 곡명을 직접 고칠 때만 띄운다 — 패널을 열자마자 뜨면 아래 입력칸을 가린다
+  const typedRef = useRef(false);
 
   const achNum = achievement !== "" ? parseFloat(achievement) : null;
   const rank   = achNum != null && !isNaN(achNum) ? achievementToRank(achNum) : null;
 
   // 곡명 자동완성
   useEffect(() => {
-    if (!bridge || !songTitle.trim()) { setSuggestions([]); setShowSug(false); return; }
+    if (!bridge || !songTitle.trim() || !typedRef.current) { setSuggestions([]); setShowSug(false); return; }
     const t = setTimeout(() => {
       bridge.search_songs(songTitle.trim(), (json) => {
         let list = [];
         try { list = JSON.parse(json); } catch { return; }
+        // 현재 입력과 똑같은 곡 하나뿐이면 보여줄 게 없다
+        if (list.length === 1 && list[0] === songTitle.trim()) list = [];
         setSuggestions(list);
         setShowSug(list.length > 0);
         setHovIdx(-1);
@@ -965,6 +1021,7 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
   }, [bridge, songTitle, difficulty, chartType]);
 
   function selectSuggestion(title) {
+    typedRef.current = false;
     setSongTitle(title);
     setSuggestions([]);
     setShowSug(false);
@@ -1003,7 +1060,7 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
           <label style={{ fontSize: 12, color: "var(--muted)" }}>곡명</label>
           <div style={{ position: "relative" }}>
             <input style={inputSt} value={songTitle}
-              onChange={e => setSongTitle(e.target.value)}
+              onChange={e => { typedRef.current = true; setSongTitle(e.target.value); }}
               onKeyDown={handleTitleKeyDown}
               onBlur={() => setTimeout(() => setShowSug(false), 150)}
               onFocus={() => suggestions.length > 0 && setShowSug(true)}
@@ -1102,8 +1159,11 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
     });
   }, [detections]);
 
-  const total = detections.reduce((a, b) => a + b.delta, 0);
-  const max   = detections.reduce((a, b) => Math.max(a, b.delta), 0);
+  const isRec = detections.some(d => d.rec);   // 신기록 분석 모드: 레이팅 대신 신기록·개선폭을 보여준다
+  const total = detections.reduce((a, b) => a + (b.delta || 0), 0);
+  const max   = detections.reduce((a, b) => Math.max(a, b.delta || 0), 0);
+  const recCount = detections.filter(d => d.new_record).length;   // 첫 기록 포함
+  const recMax   = detections.reduce((a, b) => Math.max(a, b.record_delta || 0), 0);
 
   function toggleId(id) {
     setSelectedIds(prev => {
@@ -1153,7 +1213,9 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
           <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
             {canClip
               ? "클립을 생성할 항목을 선택하세요"
-              : "VOD에서 감지된 레이팅 상승 · 자동 다운로드 · 자동 업로드"}
+              : isRec
+                ? "VOD 결과 화면에서 감지된 신기록 · 자동 다운로드 · 자동 업로드"
+                : "VOD에서 감지된 레이팅 상승 · 자동 다운로드 · 자동 업로드"}
           </div>
         </div>
         <div className="row gap-8" style={{ alignItems: "center" }}>
@@ -1204,11 +1266,19 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
         </div>
       )}
 
+      {isRec ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 18 }}>
+          <Stat label="감지"        val={detections.length}                              hint="신기록 판 + 판독 못 한 판" />
+          <Stat label="신기록"      val={recCount}                                       hint="MY BEST 갱신"           successVal={recCount > 0} />
+          <Stat label="최대 개선폭" val={recMax > 0 ? `+${recMax.toFixed(4)}%` : "-"}    hint="단일 플레이"            successVal={recMax > 0} />
+        </div>
+      ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 18 }}>
         <Stat label="감지"      val={detections.length}                              hint="" />
         <Stat label="총 상승"   val={detections.length ? `+${total}` : "-"}          hint="세션 합계"    successVal={total > 0} />
         <Stat label="최대 상승" val={detections.length ? `+${max}`   : "-"}          hint="단일 플레이"  successVal={max > 0} />
       </div>
+      )}
 
       <div className="card" style={{ overflow: "hidden" }}>
         {detections.length === 0 ? (
@@ -1224,8 +1294,8 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
                 <th style={{ width: 100 }}>감지 시각</th>
                 <th style={{ width: 100 }}>플레이 시작</th>
                 <th style={{ width: 80 }}>모드</th>
-                <th style={{ width: 150 }}>레이팅</th>
-                <th style={{ width: 60, textAlign: "right" }}>변동</th>
+                <th style={{ width: 150 }}>{isRec ? "MY BEST" : "레이팅"}</th>
+                <th style={{ width: 60, textAlign: "right" }}>{isRec ? "개선폭" : "변동"}</th>
                 <th style={{ width: 160 }}>곡명</th>
                 <th style={{ width: 90 }}>난이도</th>
                 <th style={{ width: 70, textAlign: "right" }}>레벨</th>
@@ -1260,14 +1330,30 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
                         : <span className="muted-2" style={{ fontSize: 12 }}>-</span>}
                       </td>
                       <td>
-                        <div className="row gap-8" style={{ fontSize: 12.5 }}>
-                          <span className="num muted">{d.before}</span>
-                          <span className="muted-2">→</span>
-                          <span className="num" style={{ fontWeight: 700 }}>{d.after}</span>
-                        </div>
+                        {d.rec ? (
+                          d.first_play
+                            ? <span className="chip" style={{ fontWeight: 700, color: "var(--success)", whiteSpace: "nowrap" }} title="이 채보를 처음 플레이했습니다 (MY BEST 없음)">첫 기록</span>
+                          : d.new_record
+                            ? <div className="row gap-8" style={{ fontSize: 12.5 }}>
+                                <span className="num muted">{Number(d.my_best).toFixed(4)}%</span>
+                                <span className="muted-2">→</span>
+                                <span className="chip" style={{ fontWeight: 700, color: "var(--success)", whiteSpace: "nowrap" }}>신기록</span>
+                              </div>
+                            : <span className="muted-2" style={{ fontSize: 12 }} title="신기록 여부를 읽지 못했습니다. 곡 정보를 확인하고 직접 고르세요.">판독 못 함</span>
+                        ) : (
+                          <div className="row gap-8" style={{ fontSize: 12.5 }}>
+                            <span className="num muted">{d.before}</span>
+                            <span className="muted-2">→</span>
+                            <span className="num" style={{ fontWeight: 700 }}>{d.after}</span>
+                          </div>
+                        )}
                       </td>
                       <td style={{ textAlign: "right" }}>
-                        <span className="delta up" style={{ fontSize: 14 }}>+{d.delta}</span>
+                        {d.rec
+                          ? (d.new_record && d.record_delta != null
+                              ? <span className="delta up" style={{ fontSize: 13 }} title={d.record_exact === false ? "달성률과 MY BEST의 차이로 계산한 값" : undefined}>{d.record_exact === false ? "≈" : ""}+{Number(d.record_delta).toFixed(4)}%</span>
+                              : <span className="muted-2" style={{ fontSize: 12 }}>-</span>)
+                          : <span className="delta up" style={{ fontSize: 14 }}>+{d.delta}</span>}
                       </td>
                       <td style={{ maxWidth: 200 }}>
                         {merged.song_title
@@ -1469,7 +1555,7 @@ function ScreenHighlights({ bridge, highlights, setHighlights, pending, setPendi
                   <div className="row between gap-8">
                     <div className="row gap-8" style={{ minWidth: 0 }}>
                       <span className="mono num" style={{ fontSize: 13, fontWeight: 700 }}>{h.t}</span>
-                      <span className="delta up" style={{ fontSize: 13 }}>+{h.delta}</span>
+                      <span className="delta up" style={{ fontSize: 13 }}>{/^[0-9]/.test(String(h.delta)) ? "+" : ""}{h.delta}</span>
                     </div>
                     <UploadChip status={h.status} />
                   </div>
@@ -1597,12 +1683,21 @@ function ScreenOcrEdit({ bridge, ocrData, onConfirm }) {
                 <td className="num muted" style={{ fontSize: 12 }}>{String(i + 1).padStart(2, "0")}</td>
                 <td className="mono num" style={{ fontSize: 12 }}>{fmtSec(row.timestamp)}</td>
                 <td>
+                  {row.record_delta != null || row.new_record != null ? (
+                    row.new_record
+                      ? <div className="row gap-8" style={{ fontSize: 12.5 }}>
+                          <span className="chip" style={{ fontWeight: 700, color: "var(--success)", whiteSpace: "nowrap" }}>{row.first_play ? "첫 기록" : "신기록"}</span>
+                          {row.record_delta != null && <span className="delta up" title={row.record_exact === false ? "달성률과 MY BEST의 차이로 계산한 값" : undefined}>{row.record_exact === false ? "≈" : ""}+{Number(row.record_delta).toFixed(4)}%</span>}
+                        </div>
+                      : <span className="muted-2" style={{ fontSize: 12 }}>판독 못 함</span>
+                  ) : (
                   <div className="row gap-8" style={{ fontSize: 12.5 }}>
                     <span className="num muted">{row.before}</span>
                     <span className="muted-2">→</span>
                     <span className="num" style={{ fontWeight: 700 }}>{row.after}</span>
                     <span className="delta up">+{row.change}</span>
                   </div>
+                  )}
                 </td>
                 <td>
                   <input style={inputSt} value={row.song_title || ""}
@@ -1825,7 +1920,8 @@ const ManualRun = () => (
       <ManualStep n="2">GUI 창이 열리면:
         <ul style={{ margin: "6px 0 0", paddingLeft: 20, lineHeight: 1.85 }}>
           <li><strong>YouTube URL</strong> 입력 후 <strong>상태 확인</strong> — <span className="chip success">내 채널</span> 배지가 떠야 진행됩니다</li>
-          <li><strong>시작 레이팅</strong> 입력 (예: <ManualCode>14000</ManualCode>)</li>
+          <li><strong>분석 모드</strong> 선택 — <strong>레이팅 상승</strong>(기본) 또는 <strong>신기록</strong> (신기록 모드는 <strong>08 신기록 분석 모드</strong> 장 참고)</li>
+          <li><strong>시작 레이팅</strong> 입력 (예: <ManualCode>14000</ManualCode>) — <strong>레이팅 상승 모드에서만</strong> 필요합니다 (신기록 모드에서는 입력칸이 잠깁니다)</li>
           <li><strong>시작 / 종료 시간</strong> 입력 (생략하면 전체 구간 분석)</li>
           <li><strong>자동 YouTube 업로드</strong> 토글 설정</li>
           <li><strong>시작</strong> 버튼 클릭</li>
@@ -1833,7 +1929,7 @@ const ManualRun = () => (
       </ManualStep>
       <ManualStep n="3">스캔 완료 → <strong>스캔 결과</strong> 화면으로 자동 이동
         <ul style={{ margin: "6px 0 0", paddingLeft: 20, lineHeight: 1.85 }}>
-          <li>감지된 레이팅 상승 항목이 표시됩니다</li>
+          <li>감지된 항목이 표시됩니다 (레이팅 상승 모드: 오른 레이팅, 신기록 모드: MY BEST와 개선폭)</li>
           <li>오른쪽 상단의 <strong>전체 선택 / 해제</strong> 또는 체크박스로 선택</li>
           <li><strong>클립 생성 시작 (N)</strong> 버튼 → 다운로드 · 클립 커팅 · 업로드 진행</li>
           <li>OCR 결과가 틀렸다면 <strong>✏️ 수정</strong> 버튼으로 직접 수정</li>
@@ -1878,8 +1974,33 @@ const ManualLive = () => (
   </ManualSection>
 );
 
+const ManualRecord = () => (
+  <ManualSection num="08" title="신기록 분석 모드" subtitle="결과 화면에서 MY BEST를 갱신한 판을 클립으로 만듭니다. 레이팅이 오르지 않은 판도 포함됩니다.">
+    <ManualNote kind="info"><strong>레이팅 상승</strong> 모드는 레이팅 숫자가 오른 순간을, <strong>신기록</strong> 모드는 결과 화면의 MY BEST와 달성률을 읽어 판단합니다. 신버전처럼 판마다 레이팅 화면이 뜨지 않는 경우에도 쓸 수 있습니다.</ManualNote>
+    <ManualSubhead>사용 방법</ManualSubhead>
+    <div className="col">
+      <ManualStep n="1">메인 화면의 <strong>분석 모드</strong>에서 <strong>신기록</strong>을 선택합니다. <strong>시작 레이팅</strong> 칸은 잠기며 입력하지 않아도 됩니다.</ManualStep>
+      <ManualStep n="2">URL 확인 → (필요하면 시작 / 종료 시간) → <strong>시작</strong>. 스캔이 끝나면 신기록을 세운 판만 <strong>스캔 결과</strong>에 곡명 · 난이도 · 달성률과 함께 표시됩니다.</ManualStep>
+      <ManualStep n="3">올릴 판을 체크하고 <strong>클립 생성 시작</strong>을 누릅니다. 이후 흐름(다운로드 · 클립 커팅 · 업로드)은 레이팅 상승 모드와 같습니다.</ManualStep>
+    </div>
+    <ManualSubhead>스캔 결과 화면 읽는 법</ManualSubhead>
+    <table className="tbl" style={{ background: "transparent" }}>
+      <thead><tr><th style={{ width: 170 }}>표시</th><th>의미</th></tr></thead>
+      <tbody>
+        <tr><td><strong>MY BEST → 신기록</strong> / <strong>+개선폭</strong></td><td>이전 최고 달성률에서 이번에 얼마나 올랐는지</td></tr>
+        <tr><td><span className="chip success">첫 기록</span></td><td>그 채보를 처음 플레이한 판 (MY BEST가 0%). 신기록과 같이 목록에 올라옵니다</td></tr>
+        <tr><td><strong>≈</strong> +개선폭</td><td>화면 숫자를 그대로 읽은 값이 아니라 달성률과 MY BEST의 차이로 <strong>계산해서 복원한 값</strong>. 사진과 대조해 보세요</td></tr>
+        <tr><td><strong>판독 못 함</strong></td><td>신기록인지 읽지 못한 판. 지우지 않고 남겨 둡니다. <strong>✏️ 수정</strong>과 결과 사진으로 직접 확인하세요</td></tr>
+      </tbody>
+    </table>
+    <ManualNote kind="warn"><strong>인게임 화면이 작을수록 분석 능력이 떨어져 달성률 · 개선폭이 부정확할 수 있습니다.</strong> 모의 실험에서는 게임 화면 폭 700px까지는 정상이었지만 550px 부근에서 숫자가 한 자리 틀리는 경우가 생겼고, 400px 수준에서는 신뢰하기 어려웠습니다. 방송 화면이 작다면 <strong>≈</strong> 표시와 숫자를 꼭 확인하세요.</ManualNote>
+    <ManualNote kind="warn">신기록 모드는 <strong>VOD 전용</strong>입니다. 라이브 URL을 확인하면 신기록 선택이 잠기고 레이팅 상승 모드로 진행됩니다.</ManualNote>
+    <ManualNote kind="info">신기록 판은 레이팅 상승 판보다 많아서, 자동 업로드를 켜 두면 하루 10개 제한에 금방 걸립니다. 먼저 <strong>자동 YouTube 업로드를 끄고</strong> 클립만 만든 뒤, 하이라이트 화면의 업로드 대기 카드에서 올릴 클립을 골라 올리는 방법을 권장합니다.</ManualNote>
+  </ManualSection>
+);
+
 const ManualJacket = () => (
-  <ManualSection num="08" title="곡명 인식 방식" subtitle="결과 화면의 자켓 이미지를 곡 DB의 자켓과 대조해 곡을 식별합니다.">
+  <ManualSection num="09" title="곡명 인식 방식" subtitle="결과 화면의 자켓 이미지를 곡 DB의 자켓과 대조해 곡을 식별합니다.">
     <ManualNote kind="info">별도 설정이나 API 키가 필요 없습니다. 첫 분석 시 자켓 이미지를 자동으로 내려받습니다.</ManualNote>
     <div className="col">
       <ManualStep n="1">결과 화면에서 자켓 영역을 잘라 곡 DB의 자켓 <strong>1,600여 장</strong>과 대조</ManualStep>
@@ -1893,7 +2014,7 @@ const ManualJacket = () => (
 );
 
 const ManualCreds = () => (
-  <ManualSection num="09" title="config/credentials 폴더에 있어야 하는 파일">
+  <ManualSection num="10" title="config/credentials 폴더에 있어야 하는 파일">
     <table className="tbl" style={{ background: "transparent" }}>
       <thead><tr>
         <th style={{ width: 200 }}>파일 이름</th>
@@ -1917,7 +2038,7 @@ const ManualCreds = () => (
 );
 
 const ManualErrors1 = () => (
-  <ManualSection num="10" title="오류가 날 때 — 환경 점검" subtitle="프로그램 시작 시 9개 항목을 자동으로 확인합니다.">
+  <ManualSection num="11" title="오류가 날 때 — 환경 점검" subtitle="프로그램 시작 시 9개 항목을 자동으로 확인합니다.">
     <ManualNote kind="info">프로그램 시작 시 <strong>환경 점검</strong>이 자동 실행됩니다. ffmpeg · Tesseract OCR · YOLO 모델 · YouTube 로그인 · Google 인증 파일 · 자켓 인덱스 · yt-dlp · maimai DB · GPU 9개 항목을 확인합니다.</ManualNote>
     <table className="tbl" style={{ background: "transparent" }}>
       <thead><tr>
@@ -1941,7 +2062,7 @@ const ManualErrors1 = () => (
 );
 
 const ManualErrors2 = () => (
-  <ManualSection num="11" title="오류가 날 때 — 해결법" subtitle="흔한 오류와 해결 방법입니다.">
+  <ManualSection num="12" title="오류가 날 때 — 해결법" subtitle="흔한 오류와 해결 방법입니다.">
     <table className="tbl" style={{ background: "transparent" }}>
       <thead><tr>
         <th style={{ width: "45%" }}>오류</th>
@@ -1957,6 +2078,8 @@ const ManualErrors2 = () => (
         <tr><td>다른 채널 영상이라고 나옴</td><td>업로드에 사용할 계정으로 로그인했는지 확인. 본인 채널 영상만 처리됩니다</td></tr>
         <tr><td>"Sign in to confirm you're not a bot"</td><td>Firefox에서 YouTube 로그인 확인</td></tr>
         <tr><td>곡 정보가 표시되지 않음</td><td><strong>곡 정보 추출</strong> 토글 ON 확인</td></tr>
+        <tr><td>신기록 모드에서 "판독 못 함"이 뜸</td><td>방송 화면이 작거나 흐릴 때 생깁니다. <strong>✏️ 수정</strong>과 결과 사진으로 직접 확인하세요</td></tr>
+        <tr><td>신기록 모드에서 달성률이 화면과 다름</td><td><strong>≈</strong>가 붙은 판은 계산으로 복원한 값입니다. 사진과 대조해 <strong>✏️ 수정</strong>으로 고치세요</td></tr>
         <tr><td>YouTube 업로드 실패 / 인증 오류</td><td>환경 점검 패널의 <strong>🔑 재인증</strong> 클릭</td></tr>
         <tr><td>업로드가 몇 개 올라가다 멈춤</td><td>멈춘 클립은 <ManualCode>highlights/업로드_대기_목록.txt</ManualCode>에서 제목·설명을 복사해 YouTube Studio에서 직접 올릴 수 있습니다</td></tr>
         <tr><td>Python을 찾을 수 없음</td><td>Python 재설치 (PATH 체크 확인)</td></tr>
@@ -1976,10 +2099,11 @@ function ScreenManual({ setScreen }) {
     { id: "google2",  label: "client_secret.json 발급", num: "05", Comp: ManualGoogle2 },
     { id: "run",      label: "매번 실행하기",           num: "06", Comp: ManualRun     },
     { id: "live",     label: "라이브 모드",             num: "07", Comp: ManualLive    },
-    { id: "jacket",   label: "곡명 인식 방식",           num: "08", Comp: ManualJacket  },
-    { id: "creds",    label: "credentials 파일",       num: "09", Comp: ManualCreds   },
-    { id: "errors1",  label: "오류 해결 — 환경 점검",    num: "10", Comp: ManualErrors1 },
-    { id: "errors2",  label: "오류 해결 — 해결법",      num: "11", Comp: ManualErrors2 },
+    { id: "record",   label: "신기록 분석 모드",         num: "08", Comp: ManualRecord  },
+    { id: "jacket",   label: "곡명 인식 방식",           num: "09", Comp: ManualJacket  },
+    { id: "creds",    label: "credentials 파일",       num: "10", Comp: ManualCreds   },
+    { id: "errors1",  label: "오류 해결 — 환경 점검",    num: "11", Comp: ManualErrors1 },
+    { id: "errors2",  label: "오류 해결 — 해결법",      num: "12", Comp: ManualErrors2 },
   ];
 
   const [active, setActive] = useState("system");
@@ -2087,12 +2211,13 @@ function App() {
   const [ocrReady,       setOcrReady]       = useState(false);
   const [clipSelect,     setClipSelect]     = useState(true);
   const [ocrEdit,        setOcrEdit]        = useState(true);
+  const [recordMode,     setRecordMode]     = useState(false);
   const settingsLoadedRef                   = useRef(false);
 
   useEffect(() => {
     if (!bridge || !settingsLoadedRef.current) return;
-    bridge.save_settings(JSON.stringify({ clipSelect, ocrEdit, autoUpload, songOcr }));
-  }, [clipSelect, ocrEdit, autoUpload, songOcr]);
+    bridge.save_settings(JSON.stringify({ clipSelect, ocrEdit, autoUpload, songOcr, recordMode }));
+  }, [clipSelect, ocrEdit, autoUpload, songOcr, recordMode]);
 
   useEffect(() => {
     if (typeof qt === "undefined") {
@@ -2194,6 +2319,7 @@ function App() {
         setOcrEdit(s.ocrEdit     !== undefined ? !!s.ocrEdit     : true);
         if (s.autoUpload !== undefined) setAutoUpload(!!s.autoUpload);
         if (s.songOcr    !== undefined) setSongOcr(!!s.songOcr);
+        if (s.recordMode !== undefined) setRecordMode(!!s.recordMode);
         settingsLoadedRef.current = true;
       });
     });
@@ -2273,6 +2399,8 @@ function App() {
             setAutoUpload={setAutoUpload}
             songOcr={songOcr}
             setSongOcr={setSongOcr}
+            recordMode={recordMode}
+            setRecordMode={setRecordMode}
           />
         )}
         {screen === "scan" && (

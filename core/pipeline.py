@@ -22,7 +22,7 @@ from core.scanner_parallel import (
     _init_yolo, _print_results, _save_results,
     fmt_time, scan_parallel, yt_timestamp_url,
 )
-from core.result_extractor import extract_from_frames
+from core.result_extractor import achievement_to_rank, extract_from_frames, find_record
 from core.error_messages import translate_error, log_error
 from core.retry import with_retry
 from core.downloader import _download_segment, _segment_lookback_worker, _grab_all_result_frames
@@ -129,13 +129,36 @@ def analyze_vod_stream(
     num_workers: int = 0,
     output_file: Optional[str] = None,
     cancel_event=None,
+    record_mode: bool = False,
+    output_dir: Optional[Path] = None,
 ) -> list:
-    """VOD를 스트림 URL로 직접 포워드 스캔."""
+    """VOD를 스트림 URL로 직접 포워드 스캔.
+
+    record_mode=True 면 레이팅 숫자 대신 결과 화면을 찾아, 신기록을 세운 판만 돌려준다.
+    """
     print("🔗  스트림 URL 추출 중...")
     stream_url = get_stream_url(url)
     print("    OK\n")
 
     n_workers = num_workers if num_workers > 0 else 4
+
+    if record_mode:
+        out = Path(output_dir) if output_dir is not None else PROJECT_DIR / "highlights"
+        plays = scan_parallel(
+            video_url=url,
+            video_path=stream_url,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            initial_rating=None,
+            num_workers=n_workers,
+            output_file=None,
+            cancel_event=cancel_event,
+            detect_mode="results",
+            frames_dir=out / "_scan_frames",
+        )
+        if cancel_event is not None and cancel_event.is_set():
+            return []
+        return _analyze_record_plays(plays, out)
 
     return scan_parallel(
         video_url=url,
@@ -147,6 +170,192 @@ def analyze_vod_stream(
         output_file=output_file,
         cancel_event=cancel_event,
     )
+
+
+# ── 신기록 분석 ───────────────────────────────────────────────────────────────
+
+def _analyze_record_plays_local(plays: list, output_dir: Path) -> list:
+    """결과 화면 크롭으로 곡·달성률·신기록을 읽어 신기록이 아닌 판을 뺀다 (이 프로세스에서 직접).
+
+    스캔 때 저장해 둔 크롭을 쓰므로 영상을 다시 받지 않는다. 신기록 여부를 판독하지 못한 판은
+    (곡명을 못 읽은 판 포함) 지우지 않고 남겨서 사용자가 목록에서 직접 고르게 한다.
+    PaddleOCR을 쓰므로 앱 프로세스가 아니라 `_analyze_record_plays`가 띄우는 별도 프로세스에서 돌린다.
+    """
+    import cv2
+
+    from data.song_db import load_song_db
+    from core.result_extractor import _sharpness
+
+    n = len(plays)
+    print(f"\n🔎  결과 화면 {n}판 — 곡·신기록 분석 중...")
+    song_titles, raw_songs = load_song_db(region="intl")
+    result_frames_dir = output_dir / "result_frames"
+    result_frames_dir.mkdir(parents=True, exist_ok=True)
+
+    kept: list = []
+    n_not = n_unknown = 0
+    for i, entry in enumerate(plays):
+        print(f"[OCR_PROG] {json.dumps({'done': i, 'total': n}, ensure_ascii=False)}")
+        frames = [f for f in (cv2.imread(p) for p in entry.get("result_frames", [])) if f is not None]
+        ocr_result = None
+        if frames:
+            try:
+                ocr_result = extract_from_frames(
+                    frames, song_titles, raw_songs, fps=10, skip_sec=0.0,
+                    video_ts=entry["timestamp"], with_record=True,
+                )
+            except Exception as e:
+                print(f"  ⚠️  결과 화면 분석 실패 ({fmt_time(entry['timestamp'])}): {e}")
+
+        if ocr_result is not None:
+            record = (ocr_result.achievement, ocr_result.my_best, ocr_result.best_delta, ocr_result.new_record,
+                      ocr_result.record_exact, ocr_result.record_frame)
+        elif frames:
+            # 곡을 못 읽었어도 신기록 여부는 따로 판정한다 — 신기록이 아닌 판까지 목록에 남기지 않기 위해
+            found  = find_record(frames)
+            record = ((found.achievement, found.my_best, found.delta, found.new_record, found.exact, found.frame_index)
+                      if found is not None else (None, None, None, None, None, None))
+        else:
+            record = (None, None, None, None, None, None)
+        new_record = record[3]
+
+        if new_record is False:
+            n_not += 1
+            who = ocr_result.title if ocr_result is not None else "곡 미인식"
+            print(f"  ⏭  [{fmt_time(entry['timestamp'])}] 신기록 아님 — {who} {record[0]:.4f}%")
+            continue
+
+        if ocr_result is not None:
+            _apply_ocr_to_entry(entry, ocr_result)
+        entry["new_record"] = new_record
+        if new_record and record[1] is not None and record[1] <= 0.0:
+            entry["first_play"] = True            # MY BEST 0.0000% — 처음 친 채보라 개선폭이 달성률 그대로다
+        elif new_record:
+            entry["my_best"]      = record[1]
+            entry["record_delta"] = record[2]
+            entry["record_exact"] = record[4]
+        if record[0] is not None:
+            # 곡 읽기가 고른 프레임은 큰 숫자를 못 읽어 MY BEST 값을 달성률로 내는 경우가 있다 — 판 단위 판독을 우선한다
+            entry["achievement"] = record[0]
+            entry["rank"]        = achievement_to_rank(record[0])
+        if new_record is None:
+            n_unknown += 1
+            print(f"  ❓  [{fmt_time(entry['timestamp'])}] 신기록 여부를 읽지 못했습니다 — 목록에 남겨 둡니다")
+        entry["_prefilled"] = True
+        kept.append(entry)
+        if frames:
+            try:
+                # 목록 썸네일: 숫자를 읽는 데 쓴 프레임 (못 읽었으면 가장 선명한 프레임)
+                idx   = record[5]
+                thumb = frames[idx] if idx is not None and 0 <= idx < len(frames) else max(frames, key=_sharpness)
+                cv2.imwrite(str(result_frames_dir / f"result_{len(kept)}.jpg"), thumb)
+            except Exception:
+                pass
+    print(f"[OCR_PROG] {json.dumps({'done': n, 'total': n}, ensure_ascii=False)}")
+    n_rec = sum(1 for e in kept if e.get("new_record"))
+    print(f"\n📈  결과 화면 {n}판 → 신기록 {n_rec}판 · 판독 못 한 판 {n_unknown}판 · 신기록 아님 {n_not}판 제외")
+    return kept
+
+
+class _QueueWriter:
+    """자식 프로세스의 print를 큐로 보내 앱 로그에 나오게 한다."""
+
+    def __init__(self, q):
+        self._q = q
+
+    def write(self, s):
+        if s:
+            self._q.put(("log", s))
+        return len(s)
+
+    def flush(self):
+        pass
+
+
+def _record_worker(plays: list, output_dir: str, q) -> None:
+    sys.stdout = sys.stderr = _QueueWriter(q)
+    try:
+        q.put(("result", _analyze_record_plays_local(plays, Path(output_dir))))
+    except BaseException as e:      # 자식 프로세스는 어떤 실패든 부모에게 알려야 한다
+        q.put(("error", f"{e.__class__.__name__}: {e}"))
+
+
+def _emit_record_detections(kept: list) -> None:
+    """스캔 결과 목록에 올릴 [DETECT] 줄을 낸다. id는 목록 순서(result_1…)."""
+    for k, entry in enumerate(kept, 1):
+        payload = {
+            "id": f"result_{k}", "t": fmt_time(entry["timestamp"]), "play_t": None,
+            "before": None, "after": None, "delta": None, "rec": True,
+            "new_record":   entry.get("new_record"),
+            "first_play":   bool(entry.get("first_play")),
+            "my_best":      entry.get("my_best"),
+            "record_delta": entry.get("record_delta"),
+            "record_exact": entry.get("record_exact"),
+            "song_title":     entry.get("song_title"),
+            "difficulty":     entry.get("difficulty"),
+            "achievement":    entry.get("achievement"),
+            "rank":           entry.get("rank"),
+            "internal_level": entry.get("internal_level"),
+            "chart_type":     entry.get("chart_type"),
+        }
+        print(f"[DETECT] {json.dumps(payload, ensure_ascii=False)}")
+
+
+def _analyze_record_plays(plays: list, output_dir: Path, cancel_event=None) -> list:
+    """신기록 분석을 별도 프로세스에서 돌리고 결과를 목록(DETECT)으로 낸다.
+
+    PaddleOCR을 앱 프로세스의 작업 스레드에서 직접 돌렸더니 분석이 끝나고 스레드가 정리되는 시점에
+    앱이 강제 종료됐다(pythonw, ntdll 0xC000071C). 스캔 워커처럼 프로세스를 나누면 OCR 쪽 문제가
+    앱까지 번지지 않는다. 분석 프로세스가 실패하면 판 전체를 '판독 못 함'으로 목록에 남긴다.
+    """
+    import queue as _queue
+
+    if not plays:
+        print("ℹ️  결과 화면이 감지되지 않았습니다.")
+        return []
+
+    ctx  = multiprocessing.get_context("spawn")
+    q    = ctx.Queue()
+    proc = ctx.Process(target=_record_worker, args=(plays, str(output_dir), q), daemon=True)
+    proc.start()
+
+    kept, error = None, None
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                proc.terminate()
+                return []
+            try:
+                kind, value = q.get(timeout=0.5)
+            except _queue.Empty:
+                if proc.is_alive():
+                    continue
+                try:                                   # 마지막 메시지가 아직 큐에 남았을 수 있다
+                    kind, value = q.get(timeout=1.0)
+                except _queue.Empty:
+                    error = "분석 프로세스가 결과 없이 종료되었습니다"
+                    break
+            if kind == "log":
+                print(value, end="")
+            elif kind == "result":
+                kept = value
+                break
+            elif kind == "error":
+                error = value
+                break
+    finally:
+        proc.join(timeout=10)
+        if proc.is_alive():
+            proc.terminate()
+
+    if kept is None:
+        print(f"  ⚠️  신기록 분석 실패 — {error}. 감지된 {len(plays)}판을 모두 목록에 남깁니다.")
+        kept = []
+        for entry in plays:
+            entry["new_record"] = None
+            kept.append(entry)
+    _emit_record_detections(kept)
+    return kept
 
 
 # ── OCR 페이즈 ────────────────────────────────────────────────────────────────
@@ -162,12 +371,15 @@ def _run_ocr_phase(
     실패 시 (None, [], [], {}) 반환.
     """
     try:
+        # 스캔 때 이미 곡을 읽어 둔 항목(신기록 분석 모드)은 영상을 다시 받지 않는다
+        all_ts = [e["timestamp"] for e in history if not e.get("_prefilled")]
+        if not all_ts:
+            return None, [], [], {}
         ocr_yolo = _init_yolo("cuda")
         from data.song_db import load_song_db
         song_titles, raw_songs = load_song_db(region="intl")
         ocr_frames_map: dict[float, list] = {}
         if ocr_yolo and song_titles:
-            all_ts = [e["timestamp"] for e in history]
             ocr_frames_map = _grab_all_result_frames(ocr_yolo, url, all_ts, output_dir)
         return ocr_yolo, song_titles, raw_songs, ocr_frames_map
     except Exception as e:
@@ -196,6 +408,27 @@ def _build_ocr_payload(
         result_ts = entry["timestamp"]
 
         print(f"[OCR_PROG] {json.dumps({'done': i, 'total': n}, ensure_ascii=False)}")
+
+        if entry.get("_prefilled"):
+            payload_holder.append({
+                "id":             det_id,
+                "timestamp":      result_ts,
+                "before":         entry.get("previous_rating", 0),
+                "after":          entry.get("current_rating", 0),
+                "change":         entry.get("change", 0),
+                "song_title":     entry.get("song_title"),
+                "difficulty":     entry.get("difficulty"),
+                "achievement":    entry.get("achievement"),
+                "rank":           entry.get("rank"),
+                "internal_level": entry.get("internal_level"),
+                "chart_type":     entry.get("chart_type"),
+                "confidence":     entry.get("ocr_confidence", 0.0),
+                "new_record":     entry.get("new_record"),
+                "first_play":     bool(entry.get("first_play")),
+                "record_delta":   entry.get("record_delta"),
+                "record_exact":   entry.get("record_exact"),
+            })
+            continue
 
         ocr_frames, ocr_exact_ts = ocr_frames_map.get(result_ts, ([], None))
 

@@ -107,6 +107,11 @@ class SongResult:
     rank:           str
     confidence:     float
     chart_type:     Optional[str] = None   # "std"(스탠다드) / "dx"(でらっくす) / None(판별 불가)
+    my_best:        Optional[float] = None  # 결과 화면의 MY BEST (이번 판 이전의 최고 달성률)
+    best_delta:     Optional[float] = None  # MY BEST와의 차이(절댓값)
+    new_record:     Optional[bool]  = None  # True 신기록 / False 아님 / None 판독 못 함
+    record_exact:   Optional[bool]  = None  # True: 세 숫자의 합이 정확히 맞음 / False: 두 값에서 복원한 값
+    record_frame:   Optional[int]   = None  # 신기록 판독에 쓴 프레임의 위치 (입력 프레임 목록 기준)
 
 
 # ── 전처리 ────────────────────────────────────────────────────────────────────
@@ -219,15 +224,20 @@ def detect_difficulty(img: np.ndarray, song_bar_y1: int, x_start: int = 10) -> s
 
 # ── OCR ──────────────────────────────────────────────────────────────────────
 
-def ocr_achievement(img: np.ndarray) -> Optional[float]:
-    """달성률 OCR — PaddleOCR (1000×1000 기준 y=245:415, x=40:680). 미검출 시 None."""
+def ocr_achievement(img: np.ndarray, lo: float = _ACH_MIN, strict: bool = False) -> Optional[float]:
+    """달성률 OCR — PaddleOCR (1000×1000 기준 y=245:415, x=40:680). 미검출 시 None.
+
+    lo: 유효 범위 하한. 기본 50% (레이팅이 오르는 판만 볼 때). 신기록 분석은 D 랭크(50% 미만)도 읽어야 한다.
+    strict: 큰 점수 글자로 보이는 후보만 쓴다. 큰 숫자를 못 읽었을 때 위쪽 배너의 MY BEST·개선폭을
+            달성률로 잘못 돌려주지 않게 한다 (lo를 낮추면 개선폭도 범위에 들어와서 필요하다).
+    """
     region = img[_ACH_Y1:_ACH_Y2, _ACH_X1:_ACH_X2]
     if region.size == 0:
         return None
 
     result = _get_paddle_ocr().ocr(region, cls=False)
-    # (val, y_center, box_h)
-    candidates: list[tuple[float, float, float]] = []
+    # (val, y_center, box_h, is_large)
+    candidates: list[tuple[float, float, float, bool]] = []
     lower_frags: list[tuple[str, float]] = []
 
     for line in (result or []):
@@ -242,8 +252,8 @@ def ocr_achievement(img: np.ndarray) -> Optional[float]:
             if m:
                 try:
                     val = float(m.group(1))
-                    if _ACH_MIN <= val <= _ACH_MAX:
-                        candidates.append((val, y_center, box_h))
+                    if lo <= val <= _ACH_MAX:
+                        candidates.append((val, y_center, box_h, is_large))
                     elif is_large:
                         digits = re.sub(r"[^0-9]", "", text)
                         if digits:
@@ -262,12 +272,14 @@ def ocr_achievement(img: np.ndarray) -> Optional[float]:
         if len(spare) >= 6:
             try:
                 val = float(spare[:-4] + "." + spare[-4:])
-                if _ACH_MIN <= val <= _ACH_MAX:
+                if lo <= val <= _ACH_MAX:
                     return val
             except ValueError:
                 pass
         return None
 
+    if strict:
+        candidates = [c for c in candidates if c[3]]
     if candidates:
         # box_h<25인 후보만 있으면 = MY BEST만 인식, 현재 점수는 분할됨
         if all(x[2] < 25 for x in candidates):
@@ -277,6 +289,209 @@ def ocr_achievement(img: np.ndarray) -> Optional[float]:
         return max(candidates, key=lambda x: x[1])[0]
 
     return _reconstruct(lower_frags)
+
+
+# ── 신기록 판독 ───────────────────────────────────────────────────────────────
+# 결과 화면에는 같은 정보가 세 군데 있다 — 달성률(큰 숫자), MY BEST, 개선폭(배너)이고 서로
+# 달성률 = MY BEST ± 개선폭 으로 묶여 있다. 셋을 다 읽으려 하면 작은 글씨(개선폭)의 한 자리 오독이나
+# 큰 숫자를 못 읽는 프레임(빨간 점수, 애니메이션 효과) 하나 때문에 판 전체를 놓친다. 그래서 프레임별로
+# 읽은 값을 판 단위로 모아, 서로 맞는 조합을 찾고, 하나가 비면 나머지로 복원한다.
+
+# MY BEST / 개선폭 배너 (1000×1000 크롭 기준) — 달성률 큰 숫자 바로 위. NEW RECORD 라벨도 이 안에 있다.
+_BEST_Y1, _BEST_Y2, _BEST_X1, _BEST_X2 = 255, 315, 300, 565
+_BEST_TOL     = 0.00015   # 4자리 숫자끼리의 덧셈·뺄셈이라 사실상 정확히 맞아야 한다
+_DELTA_SLACK  = 0.05      # 개선폭을 한 자리 오독해도 이 안이면 같은 값으로 본다 (소수 둘째 자리 오독이면 0.02 어긋난다)
+_MIN_DIFF     = 0.01      # 달성률과 MY BEST가 이보다 가까우면 한 자리 오독이 판정을 뒤집을 수 있다
+_RECORD_TRIES = 10        # 한 판에서 판독을 시도할 프레임 수 (선명한 순). 결과 화면을 촘촘히 읽으면 한 판에 10~25프레임이 된다
+
+# 점수 숫자 색은 랭크 구간으로 갈린다. 실측(결과 화면 점수 색상 H, 0~179): A~AAA(86~96.5%)=빨강·분홍 H≈175,
+# S 이상(97.3~100.8%)=주황·금색 H≈21. 랭크 표의 글자색(A류 빨강, S류 주황)과 같다.
+# 파랑(H≈100)은 80% 미만: D 랭크 아이콘이 뜬 완료 화면에서 13.4%와 3.7%가 파랑으로 나왔고, 60~80%(BBB~B)도
+# 파랑이라고 확인했다 (C 50~60%는 직접 못 봤다). 점수가 올라가는 도중의 프레임이 섞일 수 있어 가장 늦은 프레임의 색만 본다.
+_TIER_ROI = (300, 420, 60, 560)
+_TIER_MIN_PIXELS = 3000
+_TIER_RANGE = {"blue": (0.0, 80.0), "red": (80.0, 97.0), "gold": (97.0, 101.5)}
+
+
+def score_tier(img: np.ndarray) -> Optional[str]:
+    """점수 숫자 색으로 달성률 구간 추정: "blue"(80% 미만) / "red"(80~97%) / "gold"(97% 이상) / None(숫자가 안 보임)."""
+    y1, y2, x1, x2 = _TIER_ROI
+    roi = img[y1:y2, x1:x2]
+    if roi.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    m = (hsv[..., 1] > 110) & (hsv[..., 2] > 150)
+    if int(m.sum()) < _TIER_MIN_PIXELS:
+        return None
+    mode = int(np.bincount(hsv[..., 0][m].astype(np.int32), minlength=180).argmax())
+    if mode >= 165 or mode <= 5:
+        return "red"
+    if 10 <= mode <= 32:
+        return "gold"
+    if 90 <= mode <= 130:
+        return "blue"
+    return None
+
+
+def read_banner(img: np.ndarray) -> tuple[Optional[float], Optional[float], bool]:
+    """배너에서 (MY BEST, 개선폭, NEW RECORD 라벨 유무). 왼쪽 숫자가 MY BEST, 오른쪽이 개선폭, 부호는 읽지 않는다."""
+    roi = img[_BEST_Y1:_BEST_Y2, _BEST_X1:_BEST_X2]
+    if roi.size == 0:
+        return None, None, False
+    try:
+        result = _get_paddle_ocr().ocr(roi, cls=False)
+    except Exception as e:
+        print(f"  ⚠️  MY BEST OCR 실패: {e}")
+        return None, None, False
+    found: list[tuple[float, float]] = []      # (x 중심, 값)
+    label = False
+    for line in (result or []):
+        for box, (text, _) in (line or []):
+            squeezed = text.replace(" ", "")
+            if "RECORD" in squeezed.upper():
+                label = True
+            xc = sum(pt[0] for pt in box) / len(box)
+            for m in re.findall(r"\d{1,3}\.\d{4}", squeezed):
+                found.append((xc, float(m)))
+    if len(found) < 2:
+        return None, None, label
+    found.sort(key=lambda t: t[0])
+    return found[0][1], found[-1][1], label
+
+
+def read_record_banner(img: np.ndarray) -> tuple[Optional[float], Optional[float]]:
+    best, delta, _ = read_banner(img)
+    return best, delta
+
+
+def judge_record(ach: Optional[float], best: Optional[float], delta: Optional[float]) -> Optional[bool]:
+    """달성률 = MY BEST ± 개선폭 이 성립하는 쪽으로 신기록 여부를 판정. 어느 쪽도 안 맞으면 None(판독 오류)."""
+    if ach is None or best is None or delta is None:
+        return None
+    if abs(ach - (best + delta)) < _BEST_TOL:
+        return True
+    if abs(ach - (best - delta)) < _BEST_TOL:
+        return False
+    return None
+
+
+@dataclass
+class RecordReading:
+    achievement: float
+    my_best:     float
+    delta:       float            # 개선폭(절댓값)
+    new_record:  bool
+    exact:       bool             # True: 세 숫자의 합이 정확히 맞음 / False: 두 값에서 계산해 복원한 값
+    how:         str = ""
+    frame_index: Optional[int] = None   # 이 값을 읽는 데 쓴 프레임 (입력 프레임 목록의 위치) — 썸네일로 쓴다
+
+
+def _frame_reading(img: np.ndarray) -> dict:
+    shifted = _shift_to_standard(img)
+    best, delta, label = read_banner(shifted)
+    ach = ocr_achievement(shifted, lo=0.0, strict=True)
+    # 큰 숫자를 못 읽으면 MY BEST 값을 대신 돌려주는 경우가 있다 — 달성률로 쓰지 않는다
+    if ach is not None and best is not None and abs(ach - best) < _BEST_TOL:
+        ach = None
+    return {"ach": ach, "best": best, "delta": delta, "label": label, "tier": score_tier(shifted)}
+
+
+def _frame_of(readings: list, ach=None, best=None, delta=None) -> Optional[int]:
+    """주어진 값을 가장 많이 읽어 낸 프레임(같으면 더 늦은 프레임 — 점수가 안정된 쪽)의 위치."""
+    scored = []
+    for r in readings:
+        hit = sum(1 for key, want in (("ach", ach), ("best", best), ("delta", delta)) if want is not None and r[key] == want)
+        if hit:
+            scored.append((hit, r["idx"]))
+    return max(scored)[1] if scored else None
+
+
+def _resolve(readings: list) -> Optional[RecordReading]:
+    """프레임별 읽기 값(시간순)을 모아 서로 맞는 조합을 찾는다."""
+    from collections import Counter
+    achs   = Counter(r["ach"]   for r in readings if r["ach"]   is not None)
+    bests  = Counter(r["best"]  for r in readings if r["best"]  is not None)
+    deltas = Counter(r["delta"] for r in readings if r["delta"] is not None)
+
+    # ① 세 숫자의 합이 정확히 맞는 조합 — 서로 다른 프레임에서 읽은 값을 섞어도 된다
+    exact = []
+    for a, na in achs.items():
+        for b, nb in bests.items():
+            for d, nd in deltas.items():
+                v = judge_record(a, b, d)
+                if v is not None:
+                    exact.append((na + nb + nd, a, b, d, v))
+    if exact:
+        _, a, b, d, v = max(exact)
+        return RecordReading(a, b, d, v, True, "합 일치", _frame_of(readings, a, b, d))
+
+    # ② 달성률과 MY BEST는 읽혔고 개선폭이 한 자리 틀린 경우 — 개선폭을 차이로 다시 계산한다
+    derived = []
+    for a, na in achs.items():
+        for b, nb in bests.items():
+            diff = abs(a - b)
+            if diff >= _MIN_DIFF and any(abs(d - diff) <= _DELTA_SLACK for d in deltas):
+                derived.append((na + nb, a, b, round(diff, 4), a > b))
+    if derived:
+        _, a, b, d, v = max(derived)
+        return RecordReading(a, b, d, v, False, "달성률−MY BEST", _frame_of(readings, a, b))
+
+    # ③ 달성률을 못 읽었지만 MY BEST와 개선폭은 읽힌 경우 — 부호를 정하면 달성률이 복원된다
+    if bests and deltas:
+        b = bests.most_common(1)[0][0]
+        d = deltas.most_common(1)[0][0]
+        n_banner = sum(1 for r in readings if r["best"] is not None)
+        tier = next((r["tier"] for r in reversed(readings) if r["tier"] is not None), None)   # 가장 늦은 프레임(안정된 색)
+        plus, minus = b + d, b - d
+        sign = None
+        if any(r["label"] for r in readings):
+            sign = "+"                                     # NEW RECORD 라벨은 신기록 판에서만 뜬다
+        elif tier is not None:
+            lo, hi = _TIER_RANGE[tier]
+            fits = [sg for sg, v in (("+", plus), ("-", minus)) if lo <= v < hi or (hi == 101.5 and v == hi)]
+            if len(fits) == 1:
+                sign = fits[0]                             # 점수 색 구간에 들어가는 쪽이 하나뿐이면 그쪽
+        if sign is None and n_banner >= 2:
+            sign = "-"                                     # 배너가 두 번 이상 읽혔는데 라벨이 한 번도 없다
+        if sign == "+" and plus <= 101.5:
+            return RecordReading(round(plus, 4), b, d, True, False, "MY BEST+개선폭", _frame_of(readings, None, b, d))
+        if sign == "-" and minus >= 0:
+            return RecordReading(round(minus, 4), b, d, False, False, "MY BEST−개선폭", _frame_of(readings, None, b, d))
+    return None
+
+
+def read_record(frames_1000: list[np.ndarray]) -> tuple[Optional[RecordReading], list]:
+    """한 판의 결과 화면 프레임(시간순)에서 신기록 여부와 개선폭을 판독한다 → (판독 결과 또는 None, 프레임별 읽기 값).
+
+    선명한 프레임부터 읽고, 읽을 때마다 지금까지의 값으로 판정을 시도해 정확히 맞으면 바로 멈춘다.
+    """
+    order = sorted(range(len(frames_1000)), key=lambda i: _sharpness(frames_1000[i]), reverse=True)[:_RECORD_TRIES]
+    readings: dict = {}
+    result = None
+    for i in order:
+        readings[i] = _frame_reading(frames_1000[i])
+        readings[i]["idx"] = i
+        result = _resolve([readings[k] for k in sorted(readings)])
+        if result is not None and result.exact:
+            break
+    done = [readings[k] for k in sorted(readings)]
+    if result is None:
+        print("  [신기록] 판독 실패 — 달성률·MY BEST·개선폭으로 판정할 수 없음")
+        return None, done
+    mark = "" if result.exact else " (복원)"
+    print(f"  [신기록] {'신기록' if result.new_record else '신기록 아님'}{mark} — MY BEST {result.my_best} 개선폭 {result.delta} 달성률 {result.achievement} [{result.how}]")
+    return result, done
+
+
+def find_record(frames_1000: list[np.ndarray]) -> Optional[RecordReading]:
+    return read_record(frames_1000)[0]
+
+
+def stable_achievement(readings: list) -> Optional[float]:
+    """판정이 안 풀렸을 때 쓸 수 있는 달성률 — 서로 다른 프레임에서 같은 값이 두 번 이상 읽힌 것만."""
+    from collections import Counter
+    top = Counter(r["ach"] for r in readings if r["ach"] is not None).most_common(1)
+    return top[0][0] if top and top[0][1] >= 2 else None
 
 
 # ── 퍼지 매칭 ─────────────────────────────────────────────────────────────────
@@ -419,8 +634,13 @@ def extract_from_frames(
     fps:         int   = 30,
     skip_sec:    float = 0.3,
     video_ts:    Optional[float] = None,
+    with_record: bool = False,
 ) -> Optional[SongResult]:
-    """가장 선명한 프레임 1장에서 곡 정보를 추출 → SongResult. 실패 시 None."""
+    """가장 선명한 프레임 1장에서 곡 정보를 추출 → SongResult. 실패 시 None.
+
+    with_record=True 면 MY BEST·개선폭도 읽어 신기록 여부를 채운다. 달성률과 합이 맞는 프레임을
+    선명한 순으로 찾고, 찾으면 그 프레임의 달성률을 쓴다(합이 맞는 것이 곧 교차 검증).
+    """
     if not frames_1000:
         return None
 
@@ -446,6 +666,17 @@ def extract_from_frames(
     chart_type     = detect_chart_type(best_frame)
     internal_level = get_internal_level(raw_songs, matched_title, diff, chart_type=chart_type)
 
+    my_best = best_delta = new_record = record_exact = record_frame = None
+    if with_record:
+        found, readings = read_record(frames_1000)
+        if found is not None:
+            achievement, my_best, best_delta, new_record = found.achievement, found.my_best, found.delta, found.new_record
+            record_exact = found.exact
+            record_frame = found.frame_index
+        else:
+            # 큰 점수를 못 읽은 프레임에서 MY BEST 등 배너 숫자가 달성률로 딸려 나올 수 있다 — 믿을 만한 값만 쓴다
+            achievement = stable_achievement(readings)
+
     return SongResult(
         title=matched_title,
         difficulty=diff,
@@ -454,4 +685,9 @@ def extract_from_frames(
         rank=achievement_to_rank(achievement) if achievement is not None else "",
         confidence=ratio,
         chart_type=chart_type,
+        my_best=my_best,
+        best_delta=best_delta,
+        new_record=new_record,
+        record_exact=record_exact,
+        record_frame=record_frame,
     )
