@@ -523,7 +523,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
                       phaseInfo, setPhaseInfo, envCheckItems, onRecheck, errorBanner, setErrorBanner,
                       clipSelect, setClipSelect, ocrEdit, setOcrEdit,
                       autoUpload, setAutoUpload, songOcr, setSongOcr,
-                      recordMode, setRecordMode }) {
+                      recordMode, setRecordMode, setScanWarnings }) {
   const [url, setUrl]               = useState("");
   const [startRating, setStartRating] = useState("");
   const [liveConfirm, setLiveConfirm] = useState(null);   // 라이브 시작 전 레이팅 확인
@@ -655,6 +655,7 @@ function ScreenMain({ bridge, scanStatus, setScanStatus, vodInfo, setVodInfo, lo
     setLiveConfirm(null);
     setLog([]);
     setDetections([]);
+    setScanWarnings([]);
     setHighlights([]);
     setPhaseInfo(null);
     setScanStatus("running");
@@ -1131,7 +1132,7 @@ function InlineEditPanel({ bridge, det, onSave, onCancel }) {
 
 // ── Scan results screen ───────────────────────────────────────────────────────
 
-function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clipSelect, ocrReady, onConfirmOcr, phaseInfo }) {
+function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clipSelect, ocrReady, onConfirmOcr, phaseInfo, scanWarnings = [] }) {
   const [sel, setSel]                 = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set(detections.map(d => d.id)));
   const [expandedId, setExpandedId]   = useState(null);
@@ -1263,6 +1264,22 @@ function ScreenScan({ bridge, detections, canClip, onStartClipping, onQuit, clip
           {ocrReady
             ? `✅ OCR 분석 완료 — 곡 정보를 확인하고 수정한 뒤 확인 버튼을 눌러주세요.`
             : `✅ ${detections.length}건 감지 완료 — 클립을 생성할 항목을 선택하세요.`}
+        </div>
+      )}
+
+      {scanWarnings.length > 0 && (
+        <div style={{
+          padding: "12px 16px", background: "var(--warning-soft)", borderLeft: "3px solid var(--warning)",
+          borderRadius: "var(--r-md)", fontSize: 13, lineHeight: 1.7, color: "var(--fg-2)",
+        }}>
+          <div style={{ fontWeight: 700, color: "var(--warning)" }}>⚠ 빠진 판 의심 {scanWarnings.length}곳 — 결과 화면의 TRACK 번호가 건너뛰었습니다</div>
+          {scanWarnings.slice(0, 6).map((w, i) => (
+            <div key={i} className="mono num" style={{ fontSize: 12 }}>
+              {w.t0} → {w.t1}  (TRACK {w.prev} → {w.next})
+            </div>
+          ))}
+          {scanWarnings.length > 6 && <div style={{ fontSize: 12 }}>… 외 {scanWarnings.length - 6}곳</div>}
+          <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>이 구간 사이에 플레이가 있었는데 결과 화면을 못 찾았을 수 있습니다. 영상에서 확인해 보세요. (TRACK 3을 놓친 경우는 알 수 없습니다.)</div>
         </div>
       )}
 
@@ -1937,6 +1954,7 @@ const ManualRun = () => (
         </ul>
       </ManualStep>
     </div>
+    <ManualNote kind="info"><strong>클립 화질:</strong> 곡 시작을 찾는 임시 영상은 360p지만, <strong>최종 클립은 1080p 60fps</strong>로 다시 받아서 만듭니다. 한 판(약 2.5분)에 약 100MB라서 파일이 크고 업로드도 오래 걸립니다. 1080p 받기에 실패하면 <strong>경고창</strong>이 뜨고 남은 클립은 720p로, 720p도 안 되면 360p로 이어서 진행합니다. 유튜브에 올린 직후에는 낮은 화질만 보이다가 처리가 끝나면 HD가 나옵니다.</ManualNote>
     <ManualNote kind="warn"><strong>본인 채널의 영상만 처리합니다.</strong> URL을 확인하면 영상의 채널과 로그인한 계정을 대조해, 다른 채널이면 시작이 막힙니다. <span className="chip warning">채널 확인 불가</span>가 뜨면 환경 점검의 <strong>🔑 재인증</strong>으로 로그인하세요.</ManualNote>
     <ManualNote kind="warn">라이브 모드에서는 분석 시작 전에 이미 진행 중인 플레이의 클립은 저장되지 않습니다. 녹화는 분석 시작 시점부터 이루어지므로, 반드시 플레이 전에 분석을 시작하세요.</ManualNote>
   </ManualSection>
@@ -2081,6 +2099,7 @@ const ManualErrors2 = () => (
         <tr><td>신기록 모드에서 "판독 못 함"이 뜸</td><td>방송 화면이 작거나 흐릴 때 생깁니다. <strong>✏️ 수정</strong>과 결과 사진으로 직접 확인하세요</td></tr>
         <tr><td>신기록 모드에서 달성률이 화면과 다름</td><td><strong>≈</strong>가 붙은 판은 계산으로 복원한 값입니다. 사진과 대조해 <strong>✏️ 수정</strong>으로 고치세요</td></tr>
         <tr><td>YouTube 업로드 실패 / 인증 오류</td><td>환경 점검 패널의 <strong>🔑 재인증</strong> 클릭</td></tr>
+        <tr><td>"1080p 다운로드에 실패했습니다" 경고창</td><td>해당 클립부터 720p(또는 360p)로 진행됩니다. 인터넷 연결을 확인하고, 계속되면 환경 점검에서 <strong>yt-dlp</strong>를 업데이트하세요. 이미 올라간 낮은 화질 영상은 삭제 후 다시 올려야 화질이 올라갑니다</td></tr>
         <tr><td>업로드가 몇 개 올라가다 멈춤</td><td>멈춘 클립은 <ManualCode>highlights/업로드_대기_목록.txt</ManualCode>에서 제목·설명을 복사해 YouTube Studio에서 직접 올릴 수 있습니다</td></tr>
         <tr><td>Python을 찾을 수 없음</td><td>Python 재설치 (PATH 체크 확인)</td></tr>
       </tbody>
@@ -2212,6 +2231,8 @@ function App() {
   const [clipSelect,     setClipSelect]     = useState(true);
   const [ocrEdit,        setOcrEdit]        = useState(true);
   const [recordMode,     setRecordMode]     = useState(false);
+  const [scanWarnings,   setScanWarnings]   = useState([]);   // TRACK 번호가 건너뛴 구간 (판을 놓쳤을 수 있음)
+  const [qualityWarn,    setQualityWarn]    = useState(null); // 고화질 다운로드 실패 → 낮은 화질로 진행 ({from, to, clip, reason})
   const settingsLoadedRef                   = useRef(false);
 
   useEffect(() => {
@@ -2278,6 +2299,9 @@ function App() {
         setPhaseInfo(null);
         setScreen("scan");
       });
+      b.scan_warning.connect((json) => setScanWarnings(prev => [...prev, JSON.parse(json)]));
+      b.quality_warning.connect((json) => setQualityWarn(JSON.parse(json)));   // 실패할 때마다 들어온다 (ask 면 사용자 선택을 기다리는 중)
+      b.quality_resolved.connect(() => setQualityWarn(null));                  // 시간 초과로 자동 진행되면 창을 닫는다
       b.scan_done.connect(() => { setScanStatus("scan_done"); setScreen("scan"); });
       b.pipeline_error.connect((msg) => {
         reloadPending();
@@ -2335,6 +2359,7 @@ function App() {
     if (!bridge || selectedIds.size === 0) return;
     setOcrData([]);
     setOcrReady(false);
+    setQualityWarn(null);
     setScanStatus("running");
     bridge.start_clipping(JSON.stringify({ ids: Array.from(selectedIds), songOcr }));
     setScreen("main");
@@ -2366,6 +2391,53 @@ function App() {
 
   return (
     <div className="mm" style={{ display: "flex", height: "100%", background: "var(--bg)" }}>
+      {qualityWarn && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.55)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div className="card col" style={{ padding: "24px 28px", gap: 12, width: 460 }} role="alertdialog" aria-label="화질 경고">
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--warning)" }}>⚠ {qualityWarn.from}p 다운로드에 실패했습니다</div>
+            <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--fg-2)" }}>
+              {qualityWarn.ask
+                ? <>클립 <strong>{qualityWarn.clip}번</strong>을 {qualityWarn.from}p로 받지 못했습니다. 다시 시도하거나 <strong>{qualityWarn.to}p</strong>로 진행할 수 있습니다.
+                    {qualityWarn.to === 360 && <> 360p는 곡 시작을 찾은 임시 영상으로 만든 클립이라 화질이 낮습니다.</>}</>
+                : <>
+                    {qualityWarn.clip > 1
+                      ? <>클립 <strong>{qualityWarn.clip}번</strong>부터 </>
+                      : <>이번 클립부터 </>}
+                    <strong>{qualityWarn.to}p</strong>로 이어서 진행합니다.
+                    {qualityWarn.to === 360 && <> 720p도 받지 못해 곡 시작을 찾은 <strong>360p 영상으로 클립을 만듭니다</strong>. 화질이 낮습니다.</>}
+                  </>}
+              {qualityWarn.clip > 1 && <><br />앞의 {qualityWarn.clip - 1}개 클립은 {qualityWarn.from}p로 이미 만들었습니다.</>}
+            </div>
+            {qualityWarn.reason && (
+              <div className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>원인: {qualityWarn.reason}</div>
+            )}
+            <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
+              인터넷 연결을 확인하고, 계속 실패하면 메인 화면 환경 점검에서 <strong>yt-dlp</strong>를 업데이트해 보세요.<br />
+              {qualityWarn.ask
+                ? <>선택할 때까지 클립 만들기가 <strong>잠시 멈춰 있습니다</strong>. {Math.round((qualityWarn.timeout || 180) / 60)}분 안에 선택하지 않으면 {qualityWarn.to}p로 진행합니다.</>
+                : <>진행은 멈추지 않습니다.</>}
+            </div>
+            <div className="row gap-8" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+              {qualityWarn.ask ? (
+                <>
+                  <button className="btn" onClick={() => { bridge && bridge.answer_quality("lower"); setQualityWarn(null); }}>
+                    {qualityWarn.to}p로 진행
+                  </button>
+                  <button className="btn primary" onClick={() => { bridge && bridge.answer_quality("retry"); setQualityWarn(null); }}>
+                    {qualityWarn.from}p 다시 시도
+                  </button>
+                </>
+              ) : (
+                <button className="btn primary" onClick={() => setQualityWarn(null)}>확인</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <Sidebar
         screen={screen} setScreen={setScreen}
         scanStatus={scanStatus}
@@ -2401,6 +2473,7 @@ function App() {
             setSongOcr={setSongOcr}
             recordMode={recordMode}
             setRecordMode={setRecordMode}
+            setScanWarnings={setScanWarnings}
           />
         )}
         {screen === "scan" && (
@@ -2414,6 +2487,7 @@ function App() {
             ocrReady={ocrReady}
             onConfirmOcr={handleConfirmOcr}
             phaseInfo={phaseInfo}
+            scanWarnings={scanWarnings}
           />
         )}
         {screen === "highlights" && (
