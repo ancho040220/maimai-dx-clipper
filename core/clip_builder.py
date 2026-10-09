@@ -1,6 +1,7 @@
 """클립 메타데이터 생성 및 편집·업로드."""
 import json
 import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Optional, Tuple
 
 from config.settings import HIGHLIGHT_PRE, HIGHLIGHT_POST, MODE_LABELS
 from core.scanner_parallel import fmt_time, yt_timestamp_url
-from core.downloader import _ffmpeg_trim
+from core.downloader import _ffmpeg_trim, _download_clip_hq, last_download_error
 from core.youtube_uploader import YouTubeUploader
 
 
@@ -64,13 +65,20 @@ def _date_line(entry: dict) -> str:
 
 
 def _result_tail(entry: dict) -> str:
-    """제목 끝의 결과 표기. 레이팅이 오른 판은 레이팅, 신기록 분석 모드는 신기록 개선폭."""
+    """제목 끝의 레이팅 표기 (레이팅 상승 모드). 신기록 모드 항목은 레이팅이 없어 빈 문자열."""
     if entry.get("current_rating") is not None:
         return f" | {entry['current_rating']} (+{entry['change']})"
+    return ""
+
+
+def _record_mark(entry: dict) -> str:
+    """신기록 모드 제목에서 달성률 바로 뒤에 붙는 표기: (+0.0237%) / (첫 기록). 신기록이 아니거나 모르면 빈 문자열."""
+    if entry.get("current_rating") is not None:
+        return ""
     if entry.get("first_play"):
-        return " | 첫 기록"
+        return "(첫 기록)"
     if entry.get("new_record") and entry.get("record_delta") is not None:
-        return f" | 신기록 +{entry['record_delta']:.4f}%"
+        return f"(+{entry['record_delta']:.4f}%)"
     return ""
 
 
@@ -111,7 +119,9 @@ def build_clip_metadata(entry: dict) -> Tuple[str, str]:
 
         ach = entry.get("achievement")
         ach_str = f"{ach:.4f}%" if ach is not None else ""
-        tail = f" {entry.get('difficulty', '')} Lv.{const_str} {ach_str} {entry.get('rank', '')}"
+        mark = _record_mark(entry)
+        ach_part = f"{ach_str}{mark}" if ach_str else mark
+        tail = f" {entry.get('difficulty', '')} Lv.{const_str} {ach_part} {entry.get('rank', '')}"
         if badge_str:
             tail += f" {badge_str}"
         tail += _result_tail(entry)
@@ -137,7 +147,7 @@ def build_clip_metadata(entry: dict) -> Tuple[str, str]:
         if entry.get("first_play"):
             title = f"{_title_tag(entry)} 첫 기록"
         else:
-            title = f"{_title_tag(entry)} 신기록" + (f" +{delta:.4f}%" if entry.get("new_record") and delta is not None else "")
+            title = f"{_title_tag(entry)} 신기록" + (f"(+{delta:.4f}%)" if entry.get("new_record") and delta is not None else "")
         description = (
             f"{_date_line(entry)}{_result_line(entry)}"
             f"플레이 시작: {entry.get('play_url', '')}\n"
@@ -227,6 +237,38 @@ def _save_clip_meta(out_file: Path, title: str, description: str) -> None:
         print(f"    ⚠️  메타데이터 저장 실패 (재업로드 시 제목 손실): {e}")
 
 
+class QualityAsker:
+    """고화질 다운로드가 실패했을 때 사용자 선택('retry' / 'lower')을 기다린다.
+
+    __call__ 이 화면에 선택창을 요청하고(QUALITY_WARN ask), 작업 스레드는 answer() 가 불릴 때까지 멈춘다.
+    시간이 지나거나 중단(cancel_event)되면 낮은 화질('lower')로 진행해서, 자리를 비워도 파이프라인이 영원히 멈추지 않게 한다.
+    """
+
+    def __init__(self, cancel_event=None, timeout: float = 180.0):
+        self._cancel  = cancel_event
+        self._timeout = timeout
+        self._event   = threading.Event()
+        self._choice  = "lower"
+
+    def answer(self, choice: str) -> None:
+        self._choice = "retry" if choice == "retry" else "lower"
+        self._event.set()
+
+    def __call__(self, info: dict) -> str:
+        self._event.clear()
+        self._choice = "lower"
+        print(f"[QUALITY_WARN] {json.dumps({**info, 'ask': True, 'timeout': self._timeout}, ensure_ascii=False)}")
+        deadline = time.time() + self._timeout
+        while not self._event.wait(0.2):
+            if self._cancel is not None and self._cancel.is_set():
+                return "lower"
+            if time.time() > deadline:
+                print(f"[QUALITY_RESOLVED] {json.dumps({'choice': 'lower', 'auto': True}, ensure_ascii=False)}")
+                print(f"  ⏱  {int(self._timeout)}초 안에 선택하지 않아 {info['to']}p 로 진행합니다")
+                return "lower"
+        return self._choice
+
+
 def _cut_and_upload_clips(
     history: list,
     url: str,
@@ -237,12 +279,19 @@ def _cut_and_upload_clips(
     cancel_event=None,
     stream_start: Optional[float] = None,
     stream_start_precise: bool = True,
+    quality_ask=None,
 ) -> None:
-    """각 항목별 클립 커팅 → 업로드. OCR 결과는 history 항목에 이미 적용되어 있어야 함."""
+    """각 항목별 클립 커팅 → 업로드. OCR 결과는 history 항목에 이미 적용되어 있어야 함.
+
+    quality_ask: 고화질 다운로드가 실패했을 때 사용자 선택을 받는 함수 info -> "retry" | "lower".
+    없으면(None) 기다리지 않고 한 단계 낮춰 진행한다.
+    """
     n = len(history)
     pending_uploads: list[str] = []
     n_cut       = 0   # 커팅 성공
     n_estimated = 0   # 역추적 실패로 시작 지점을 추정(3분 전)한 클립
+    hq_height   = 1080                # 지금 시도할 화질(1080 → 720 → 0 = 360p 임시 파일을 잘라 쓰기). 한 번 실패하면 남은 클립도 같은 단계로
+    n_by_quality = {1080: 0, 720: 0, 360: 0}
 
     for i, entry in enumerate(history):
         if cancel_event is not None and cancel_event.is_set():
@@ -293,7 +342,44 @@ def _cut_and_upload_clips(
         title, desc = build_clip_metadata(entry)
         out_file   = output_dir / clip_filename(entry, title, i)
 
-        if _ffmpeg_trim(temp_file, clip_start, clip_end, out_file):
+        # 최종 클립은 고화질로 받는다 (임시 파일은 곡 시작을 찾는 360p). 실패하면 경고하고 한 단계씩 낮춘다.
+        hq_tmp = output_dir / f"_hq_{i}.mp4"            # 제목에 % 가 있어 yt-dlp 출력 템플릿으로 바로 쓸 수 없어 임시 이름으로 받는다
+        got = 0
+        while hq_height and not (cancel_event is not None and cancel_event.is_set()):
+            if _download_clip_hq(start_dl + clip_start, start_dl + clip_end, hq_tmp, url, hq_height):
+                got = hq_height
+                break
+            hq_tmp.unlink(missing_ok=True)
+            lower = 720 if hq_height == 1080 else 0
+            info = {"from": hq_height, "to": lower or 360, "clip": i + 1, "reason": last_download_error()}
+            print(f"    ⚠️  {hq_height}p 다운로드 실패 (원인: {info['reason'] or '알 수 없음'})")
+            if quality_ask is not None:
+                choice = quality_ask(info)          # 사용자가 고를 때까지 기다린다 (시간이 지나면 낮추는 쪽)
+            else:
+                print(f"[QUALITY_WARN] {json.dumps(info, ensure_ascii=False)}")
+                choice = "lower"
+            if choice == "retry":
+                print(f"    🔁  {hq_height}p 다시 시도합니다")
+                continue
+            print(f"    ⬇️  {lower or 360}p 로 진행합니다")
+            hq_height = lower
+        trimmed = False
+        if got:
+            try:
+                out_file.unlink(missing_ok=True)
+                hq_tmp.replace(out_file)
+                trimmed = out_file.exists()
+            except OSError as e:
+                print(f"    ⚠️  고화질 클립 저장 실패 ({e}) — 360p 로 대체합니다")
+                hq_tmp.unlink(missing_ok=True)
+        if trimmed:
+            n_by_quality[got] += 1
+        else:
+            trimmed = _ffmpeg_trim(temp_file, clip_start, clip_end, out_file)
+            if trimmed:
+                n_by_quality[360] += 1
+
+        if trimmed:
             n_cut += 1
             print(f"    💾  {out_file.name}")
             size_mb = round(out_file.stat().st_size / 1024 / 1024, 1) if out_file.exists() else 0
@@ -321,6 +407,7 @@ def _cut_and_upload_clips(
 
     # 처리 요약 — 전부 추정 시작 지점이거나 업로드 실패가 있으면 명시적으로 알림 (B-8)
     print(f"\n📋  클립 처리 요약: 커팅 {n_cut}/{n} · 시작지점 추정 {n_estimated} · 업로드 실패 {len(pending_uploads)}")
+    print(f"    화질: 1080p {n_by_quality[1080]}개 · 720p {n_by_quality[720]}개 · 360p {n_by_quality[360]}개")
     if n_cut > 0 and n_estimated == n_cut:
         print("🚨  모든 클립이 시작 지점 '추정'으로 잘렸습니다 — 역추적이 전부 실패했을 수 있습니다. 클립 구간을 확인하세요.")
     memo = refresh_pending_memo(output_dir, getattr(uploader, "last_error", None))

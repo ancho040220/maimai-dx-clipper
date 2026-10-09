@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from config.settings import (
-    ytdlp_cookie_args, NO_WINDOW, OCR_CLIP_PRE, OCR_CLIP_POST,
+    PROJECT_DIR, ytdlp_cookie_args, NO_WINDOW, OCR_CLIP_PRE, OCR_CLIP_POST,
 )
 from core.error_messages import translate_error
 from core.result_extractor import _sharpness
@@ -21,16 +21,55 @@ _MAX_DL_ATTEMPTS = 3    # 다운로드 최대 재시도 횟수
 _DL_TIMEOUT      = 300  # 다운로드 타임아웃 (초)
 _FFMPEG_TIMEOUT  = 120  # ffmpeg 커팅 타임아웃 (초)
 
+# 곡 시작을 찾는 임시 파일은 "영상+소리 합본" 중 최고(유튜브에서는 360p 하나뿐)로 충분하다.
+_DEFAULT_FORMAT = "best[height<=1080]/best"
+# 최종 클립 파일용: 영상 전용(DASH)과 소리를 따로 받아 합친다. 합본(best)은 360p 라서 쓰지 않는다.
+# 마지막에 /best 를 두지 않는 이유: 고화질을 못 받으면 실패로 알려서 낮은 단계로 넘어가야 하기 때문이다.
+# H.264(avc1)를 먼저 고른다: 새 방송은 AV1 도 있는데, 기본 선택은 AV1 이라 윈도우 기본 재생기·편집 프로그램에서 안 열릴 수 있다.
+_HQ_FORMATS = {
+    1080: ("bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]"
+           "/bestvideo[height<=1080]+bestaudio"),
+    720:  ("bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]"
+           "/bestvideo[height<=720]+bestaudio"),
+}
+
+_last_error = ""        # 마지막 다운로드 실패 사유(한글) — 화질 경고창에 쓴다
+
+
+def last_download_error() -> str:
+    return _last_error
+
+
+def _log_failure(output: Path, fmt: str, detail: str) -> None:
+    """다운로드 실패 상세(yt-dlp 오류 전문)를 logs/error.log 에 남긴다 — 화면에는 한 줄 사유만 보이므로 원인 추적용."""
+    try:
+        logs = PROJECT_DIR / "logs"
+        logs.mkdir(exist_ok=True)
+        with open(logs / "error.log", "a", encoding="utf-8") as f:
+            f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] [download] {output.name}\nformat: {fmt}\n{detail[-2000:]}\n")
+    except Exception:
+        pass
+
+
+def _reason(stderr: str) -> str:
+    """yt-dlp 오류 출력에서 사용자에게 보여 줄 한 줄 사유."""
+    if "Requested format is not available" in stderr:
+        return "이 영상에는 요청한 화질의 영상 형식이 없거나 받을 수 없습니다"
+    last = stderr.splitlines()[-1] if stderr else ""
+    return " ".join(translate_error(last).split())[:160]
+
 
 def _download_segment(
-    start_sec: float, end_sec: float, output: Path, url: str,
+    start_sec: float, end_sec: float, output: Path, url: str, fmt: Optional[str] = None,
 ) -> bool:
-    """yt-dlp --download-sections로 구간 다운로드."""
+    """yt-dlp --download-sections로 구간 다운로드. fmt 를 주지 않으면 합본 최고 화질(360p)."""
+    global _last_error
+    _last_error = ""
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--download-sections", f"*{int(start_sec)}-{int(end_sec)}",
         "--socket-timeout", "30",
-        "-f", "best[height<=1080]/best",
+        "-f", fmt or _DEFAULT_FORMAT,
         "--merge-output-format", "mp4",
         "--no-playlist", "--no-warnings",
         "-N", "4",
@@ -68,15 +107,20 @@ def _download_segment(
 
         if "Sign in to confirm" in stderr:
             if stderr:
-                print(f"  ⚠️  다운로드 오류 ({output.name}): {translate_error(stderr.splitlines()[-1])}")
+                _last_error = _reason(stderr)
+                print(f"  ⚠️  다운로드 오류 ({output.name}): {_last_error}")
             return False
 
         if timed_out:
+            _log_failure(output, fmt or _DEFAULT_FORMAT, f"timeout {_DL_TIMEOUT}s")
+            _last_error = f"다운로드가 {_DL_TIMEOUT}초 안에 끝나지 않았습니다"
             print(f"  타임아웃 ({output.name}): {_DL_TIMEOUT}초 초과 — {'재시도' if attempt < _MAX_DL_ATTEMPTS else '건너뜀'}")
             output.unlink(missing_ok=True)
         elif proc.returncode != 0:
+            _log_failure(output, fmt or _DEFAULT_FORMAT, stderr or f"exit code {proc.returncode}")
             if stderr:
-                print(f"  ⚠️  다운로드 오류 ({output.name}): {translate_error(stderr.splitlines()[-1])}")
+                _last_error = _reason(stderr)
+                print(f"  ⚠️  다운로드 오류 ({output.name}): {_last_error}")
             output.unlink(missing_ok=True)
         elif output.exists():
             return True
@@ -87,6 +131,30 @@ def _download_segment(
             time.sleep(delay)
 
     return False
+
+
+def _probe_height(path: Path) -> Optional[int]:
+    """영상 높이(px). ffprobe 가 없거나 읽지 못하면 None."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30, creationflags=NO_WINDOW,
+        )
+        return int(r.stdout.strip().splitlines()[0]) if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        return None
+
+
+def _download_clip_hq(start_sec: float, end_sec: float, output: Path, url: str, height: int) -> bool:
+    """최종 클립 구간을 height(1080 / 720) 화질로 받는다. 실패하면 False — 사유는 last_download_error()."""
+    import math
+    output.unlink(missing_ok=True)
+    ok = _download_segment(math.floor(start_sec), math.ceil(end_sec), output, url, fmt=_HQ_FORMATS[height])
+    if ok:
+        got = _probe_height(output)
+        print(f"    🎞  {height}p 요청 → 받은 화질 {got}p" if got else f"    🎞  {height}p 요청")
+    return ok
 
 
 def _ffmpeg_trim(src: Path, start: float, end: float, output: Path) -> bool:

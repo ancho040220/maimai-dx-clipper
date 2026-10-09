@@ -66,3 +66,22 @@ def is_result_screen(crop_1000: np.ndarray) -> bool:
     if not (_Y_MIN <= y / crop_1000.shape[0] <= _Y_MAX and _W_MIN <= w <= _W_MAX):
         return False
     return _stands_out(crop_1000, bar)
+
+
+def find_track_gaps(seq: list) -> list:
+    """결과 화면의 TRACK 번호 순서에서 빠진 판을 찾는다.
+
+    seq: 시간순 [(시각, TRACK 번호 또는 None)]. 번호를 못 읽은 판이 낀 쌍은 판단하지 않는다.
+    한 크레딧은 TRACK 1 → 2 → 3 으로 진행하고, 어느 번호 뒤에든 새 크레딧의 TRACK 1 이 올 수 있다.
+    롱곡(2트랙 소비)을 고르면 그 크레딧이 끝나므로 다음은 TRACK 1 이라 예외가 필요 없다.
+    그 밖의 건너뜀(1 → 3, 2 → 2, 3 → 2 …)은 사이의 판을 놓친 것이다.
+    TRACK 3 을 놓친 경우(2 → 1)는 정상 패턴과 같아서 찾지 못한다.
+    """
+    gaps = []
+    for (t0, a), (t1, b) in zip(seq, seq[1:]):
+        if a is None or b is None:
+            continue
+        if b == 1 or (a < 3 and b == a + 1):
+            continue
+        gaps.append({"t0": t0, "t1": t1, "prev": a, "next": b})
+    return gaps

@@ -483,6 +483,24 @@ def read_record(frames_1000: list[np.ndarray]) -> tuple[Optional[RecordReading],
     return result, done
 
 
+_TRACK_ROI = (0, 90, 330, 670)   # 결과 화면 맨 위 가운데의 "TRACK 01"
+
+
+def read_track_number(frames_1000: list[np.ndarray], tries: int = 3) -> Optional[int]:
+    """결과 화면 위쪽의 TRACK 번호(1~3). 선명한 프레임부터 읽어서 처음 읽힌 값. 못 읽으면 None."""
+    y1, y2, x1, x2 = _TRACK_ROI
+    for fr in sorted(frames_1000, key=_sharpness, reverse=True)[:tries]:
+        try:
+            res = _get_paddle_ocr().ocr(fr[y1:y2, x1:x2], cls=False)
+        except Exception:
+            continue
+        txt = "".join(it[1][0] for line in (res or []) for it in (line or [])).upper().replace(" ", "")
+        m = re.search(r"TRACK[0O]?(\d)", txt)      # OCR 이 0 을 알파벳 O 로 읽는 경우가 있다 (TRACKO3)
+        if m and 1 <= int(m.group(1)) <= 3:
+            return int(m.group(1))
+    return None
+
+
 def find_record(frames_1000: list[np.ndarray]) -> Optional[RecordReading]:
     return read_record(frames_1000)[0]
 

@@ -93,6 +93,9 @@ def _detect_level(text: str) -> str:
     return "info"
 
 
+# 고화질 다운로드 실패 후 사용자가 선택하기를 기다리는 시간(초). 지나면 낮은 화질로 진행한다.
+_QUALITY_ASK_TIMEOUT = 180
+
 class Bridge(QObject):
     # ── Python → JS 시그널 ────────────────────────────────────────────────────
     status_result     = pyqtSignal(str)   # JSON VideoStatus
@@ -105,6 +108,9 @@ class Bridge(QObject):
     phase_update      = pyqtSignal(str)   # JSON {phase, step, total, msg}
     scan_finished     = pyqtSignal()
     scan_done         = pyqtSignal(str)   # JSON {count} — 스캔 완료, 클립 생성 대기 중
+    quality_warning   = pyqtSignal(str)   # JSON {from, to, clip, reason, ask?, timeout?} — 고화질 다운로드 실패 (ask 면 사용자 선택을 기다림)
+    quality_resolved  = pyqtSignal(str)   # JSON {choice, auto} — 선택이 끝남(시간 초과 포함) → 경고창을 닫는다
+    scan_warning      = pyqtSignal(str)   # JSON {t0, t1, prev, next} — TRACK 번호가 건너뛴 구간 (판을 놓쳤을 수 있음)
     pipeline_error    = pyqtSignal(str)
     pipeline_stopped  = pyqtSignal()
     env_check_result  = pyqtSignal(str)   # JSON list[dict]
@@ -387,6 +393,7 @@ class Bridge(QObject):
 
         from core.youtube_uploader import YouTubeUploader
         from core.pipeline import process_vod_entries, process_live_clips
+        from core.clip_builder import QualityAsker
 
         output_dir = PROJECT_DIR / "highlights"
         uploader   = YouTubeUploader() if self._auto_upload else None
@@ -395,6 +402,7 @@ class Bridge(QObject):
         self._ocr_event          = threading.Event()
         self._confirm_event      = threading.Event()
         self._cancel_event       = threading.Event()
+        self._quality_asker      = QualityAsker(self._cancel_event, _QUALITY_ASK_TIMEOUT)
         self._confirmed_history  = selected_history
         self._ocr_payload_holder = []
 
@@ -406,6 +414,8 @@ class Bridge(QObject):
 
         # 라이브 항목은 clip_path 가 있음 (Phase 1에서 저장됨)
         is_live_mode = any(e.get("clip_path") for e in selected_history)
+
+        quality_asker = self._quality_asker
 
         def _run_clipping():
             print(f"\n🔎  {len(selected_history)}건 선택 — 클립 추출 시작...")
@@ -435,6 +445,7 @@ class Bridge(QObject):
                     ocr_payload_holder=ocr_payload_holder,
                     skip_ocr=not song_ocr,
                     cancel_event=cancel_event,
+                    quality_ask=quality_asker,
                 )
 
         self._worker = PipelineWorker(_run_clipping)
@@ -442,6 +453,13 @@ class Bridge(QObject):
         self._worker.done.connect(self.scan_finished.emit)
         self._worker.failed.connect(self._on_pipeline_error)
         self._worker.start()
+
+    @pyqtSlot(str)
+    def answer_quality(self, choice: str):
+        """JS 화질 경고창에서 '다시 시도'(retry) / '낮은 화질로 진행'(lower)을 눌렀을 때."""
+        asker = getattr(self, "_quality_asker", None)
+        if asker is not None:
+            asker.answer(choice)
 
     @pyqtSlot(str)
     def confirm_ocr(self, edited_json: str):
@@ -708,8 +726,9 @@ class Bridge(QObject):
 
     def _cleanup_temp_files(self):
         try:
-            for f in (PROJECT_DIR / "highlights").glob("_temp_*.mp4"):
-                f.unlink(missing_ok=True)
+            for pattern in ("_temp_*.mp4", "_hq_*.mp4"):
+                for f in (PROJECT_DIR / "highlights").glob(pattern):
+                    f.unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -748,6 +767,15 @@ class Bridge(QObject):
             if data.get("status") == "failed":
                 self._failed_files.append(data.get("file", ""))
             self.highlight_updated.emit(json.dumps(data, ensure_ascii=False))
+            return
+        if line.startswith("[QUALITY_RESOLVED]"):
+            self.quality_resolved.emit(line[18:].strip())
+            return
+        if line.startswith("[QUALITY_WARN]"):
+            self.quality_warning.emit(line[14:].strip())
+            return
+        if line.startswith("[SCAN_WARN]"):
+            self.scan_warning.emit(line[11:].strip())
             return
         if line.startswith("[SCAN_DONE]"):
             self.scan_done.emit(line[11:].strip())

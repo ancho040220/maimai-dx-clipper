@@ -22,7 +22,8 @@ from core.scanner_parallel import (
     _init_yolo, _print_results, _save_results,
     fmt_time, scan_parallel, yt_timestamp_url,
 )
-from core.result_extractor import achievement_to_rank, extract_from_frames, find_record
+from core.result_extractor import achievement_to_rank, extract_from_frames, find_record, read_track_number
+from core.result_screen import find_track_gaps
 from core.error_messages import translate_error, log_error
 from core.retry import with_retry
 from core.downloader import _download_segment, _segment_lookback_worker, _grab_all_result_frames
@@ -174,7 +175,7 @@ def analyze_vod_stream(
 
 # ── 신기록 분석 ───────────────────────────────────────────────────────────────
 
-def _analyze_record_plays_local(plays: list, output_dir: Path) -> list:
+def _analyze_record_plays_local(plays: list, output_dir: Path) -> tuple:
     """결과 화면 크롭으로 곡·달성률·신기록을 읽어 신기록이 아닌 판을 뺀다 (이 프로세스에서 직접).
 
     스캔 때 저장해 둔 크롭을 쓰므로 영상을 다시 받지 않는다. 신기록 여부를 판독하지 못한 판은
@@ -193,10 +194,12 @@ def _analyze_record_plays_local(plays: list, output_dir: Path) -> list:
     result_frames_dir.mkdir(parents=True, exist_ok=True)
 
     kept: list = []
+    tracks: list = []          # 신기록이 아닌 판까지 포함해 모든 판의 TRACK 번호 — 빠진 판 확인용
     n_not = n_unknown = 0
     for i, entry in enumerate(plays):
         print(f"[OCR_PROG] {json.dumps({'done': i, 'total': n}, ensure_ascii=False)}")
         frames = [f for f in (cv2.imread(p) for p in entry.get("result_frames", [])) if f is not None]
+        tracks.append(read_track_number(frames) if frames else None)
         ocr_result = None
         if frames:
             try:
@@ -254,7 +257,9 @@ def _analyze_record_plays_local(plays: list, output_dir: Path) -> list:
     print(f"[OCR_PROG] {json.dumps({'done': n, 'total': n}, ensure_ascii=False)}")
     n_rec = sum(1 for e in kept if e.get("new_record"))
     print(f"\n📈  결과 화면 {n}판 → 신기록 {n_rec}판 · 판독 못 한 판 {n_unknown}판 · 신기록 아님 {n_not}판 제외")
-    return kept
+    gaps = find_track_gaps([(e["timestamp"], tr) for e, tr in zip(plays, tracks)])
+    print(f"  TRACK 번호를 읽은 판 {sum(1 for tr in tracks if tr)}/{n}")
+    return kept, gaps
 
 
 class _QueueWriter:
@@ -275,7 +280,7 @@ class _QueueWriter:
 def _record_worker(plays: list, output_dir: str, q) -> None:
     sys.stdout = sys.stderr = _QueueWriter(q)
     try:
-        q.put(("result", _analyze_record_plays_local(plays, Path(output_dir))))
+        q.put(("result", _analyze_record_plays_local(plays, Path(output_dir))))   # (kept, gaps)
     except BaseException as e:      # 자식 프로세스는 어떤 실패든 부모에게 알려야 한다
         q.put(("error", f"{e.__class__.__name__}: {e}"))
 
@@ -301,6 +306,16 @@ def _emit_record_detections(kept: list) -> None:
         print(f"[DETECT] {json.dumps(payload, ensure_ascii=False)}")
 
 
+def _emit_track_gaps(gaps: list) -> None:
+    """TRACK 번호가 건너뛴 곳을 로그와 스캔 결과 화면(상단 안내)에 알린다."""
+    for g in gaps:
+        msg = f"TRACK {g['prev']} → {g['next']}: 사이에서 판을 놓쳤을 수 있습니다 ({fmt_time(g['t0'])} ~ {fmt_time(g['t1'])})"
+        print(f"  ⚠️  {msg}")
+        print(f"[SCAN_WARN] {json.dumps({'t0': fmt_time(g['t0']), 't1': fmt_time(g['t1']), 'prev': g['prev'], 'next': g['next']}, ensure_ascii=False)}")
+    if gaps:
+        print(f"⚠️  빠진 판 의심 {len(gaps)}곳 — 위 구간의 영상을 확인하세요")
+
+
 def _analyze_record_plays(plays: list, output_dir: Path, cancel_event=None) -> list:
     """신기록 분석을 별도 프로세스에서 돌리고 결과를 목록(DETECT)으로 낸다.
 
@@ -319,7 +334,7 @@ def _analyze_record_plays(plays: list, output_dir: Path, cancel_event=None) -> l
     proc = ctx.Process(target=_record_worker, args=(plays, str(output_dir), q), daemon=True)
     proc.start()
 
-    kept, error = None, None
+    kept, gaps, error = None, [], None
     try:
         while True:
             if cancel_event is not None and cancel_event.is_set():
@@ -338,7 +353,7 @@ def _analyze_record_plays(plays: list, output_dir: Path, cancel_event=None) -> l
             if kind == "log":
                 print(value, end="")
             elif kind == "result":
-                kept = value
+                kept, gaps = value
                 break
             elif kind == "error":
                 error = value
@@ -355,6 +370,7 @@ def _analyze_record_plays(plays: list, output_dir: Path, cancel_event=None) -> l
             entry["new_record"] = None
             kept.append(entry)
     _emit_record_detections(kept)
+    _emit_track_gaps(gaps)
     return kept
 
 
@@ -606,6 +622,7 @@ def process_vod_entries(
     ocr_payload_holder=None,
     skip_ocr: bool = False,
     cancel_event=None,
+    quality_ask=None,
 ) -> None:
     """① OCR + ② 병렬 다운로드/역추적 (동시 실행)  ③ OCR 확인 대기  ④ 클립 커팅 + 업로드."""
 
@@ -683,6 +700,7 @@ def process_vod_entries(
         final_history, url, output_dir, uploader,
         start_dl_map, lookback_map, cancel_event=cancel_event,
         stream_start=stream_start, stream_start_precise=start_precise,
+        quality_ask=quality_ask,
     )
 
 
